@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>pySecretary Prototype</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>pySecretary</h1>
+          <div id="status" class="status">stopped</div>
+          <div id="audio-state" class="audio-state">audio: quiet level 0.000</div>
+          <div id="queue-depth" class="queue-depth">queues: audio 0 / text 0</div>
+        </div>
+        <div class="controls" aria-label="capture controls">
+          <button id="start-button" type="button">Start</button>
+          <button id="stop-button" type="button">Stop</button>
+          <button id="clear-button" type="button">Clear</button>
+        </div>
+      </header>
+
+      <section class="meter-band" aria-label="audio level">
+        <div id="audio-meter" class="audio-meter"></div>
+      </section>
+
+      <section class="workspace">
+        <section class="panel panel-output">
+          <h2>Smoothed Output</h2>
+          <pre id="smoothed-output"></pre>
+        </section>
+
+        <section class="panel">
+          <h2>Raw Transcript</h2>
+          <div id="raw-transcript" class="stack"></div>
+        </section>
+
+        <section class="panel">
+          <details>
+            <summary><h2>Full Transcript (all contexts)</h2></summary>
+            <pre id="full-transcript" class="scroll"></pre>
+          </details>
+        </section>
+
+        <section class="panel">
+          <h2>Sensitivity &amp; Worker Options</h2>
+          <div class="hint">Lower the energy threshold to pick up quieter speech. Watch the live level above while you talk.</div>
+          <form id="options-form" class="options">
+            <label>Energy threshold (start)
+              <input id="opt-energy" name="energy_threshold" type="number" min="0" step="0.001">
+            </label>
+            <label>Min peak level (keep)
+              <input id="opt-peak" name="transcription_min_peak_level" type="number" min="0" step="0.001">
+            </label>
+            <label>Silence gap (s)
+              <input id="opt-silence" name="silence_gap_seconds" type="number" min="0" step="0.1">
+            </label>
+            <label>Min speech (s)
+              <input id="opt-minspeech" name="min_speech_seconds" type="number" min="0" step="0.05">
+            </label>
+            <label>Max turn (s)
+              <input id="opt-maxturn" name="max_turn_seconds" type="number" min="0" step="1">
+            </label>
+            <button id="options-apply" type="submit">Apply</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>Latest Feedback</h2>
+          <pre id="latest-feedback"></pre>
+        </section>
+
+        <section class="panel">
+          <h2>Latest Thought</h2>
+          <pre id="latest-thought"></pre>
+        </section>
+
+        <section class="panel">
+          <h2>Selected Turn</h2>
+          <div id="selected-turn" class="meta"></div>
+          <div class="detail-label">Feedback</div>
+          <div id="selected-feedback" class="stack compact"></div>
+          <div class="detail-label">Thought</div>
+          <div id="selected-thoughts" class="stack compact"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Errors</h2>
+          <div id="errors" class="stack"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Events</h2>
+          <div id="events" class="stack compact"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,10 +1,10 @@
 from .audio import play_audio_bytes
 from .config import SecretaryConfig
-from .koboldcpp import KoboldCppClient
+from .koboldcpp import KoboldCppApi, KoboldCppClient
 
 
 class TextToSpeechClient:
-    def __init__(self, config: SecretaryConfig, api: KoboldCppClient | None = None) -> None:
+    def __init__(self, config: SecretaryConfig, api: KoboldCppApi | None = None) -> None:
         self.config = config
         self.api = api or KoboldCppClient.from_config(config)
 

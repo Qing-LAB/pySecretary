@@ -5,3 +5,5 @@ __pycache__/
 *.wav
 *.mp3
 *.log
+conversation.txt
+.claude/

@@ -1,0 +1,565 @@
+import os
+import tempfile
+import threading
+import time
+import unittest
+
+from tests.audio_stubs import install_audio_dependency_stubs
+
+install_audio_dependency_stubs()
+
+from pysecretary.audio import AudioTurn
+from pysecretary.config import SecretaryConfig
+from pysecretary.events import AssistantCommand
+from pysecretary.prototype import PrototypeController, ScriptedTurnSource
+from pysecretary.transcript import TranscriptMergeResult, TranscriptSection
+
+
+class FakeStt:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.calls: list[bytes] = []
+
+    def transcribe_audio(self, audio_bytes: bytes) -> str:
+        self.calls.append(audio_bytes)
+        return self.responses.pop(0)
+
+
+class BlockingStt:
+    def __init__(self) -> None:
+        self.calls: list[bytes] = []
+        self.first_call_started = threading.Event()
+        self.release_first_call = threading.Event()
+        self._lock = threading.Lock()
+
+    def transcribe_audio(self, audio_bytes: bytes) -> str:
+        with self._lock:
+            self.calls.append(audio_bytes)
+            call_index = len(self.calls)
+
+        if call_index == 1:
+            self.first_call_started.set()
+            self.release_first_call.wait(10.0)
+        return f"raw text {call_index}"
+
+
+class BlockingSecondStt:
+    def __init__(self) -> None:
+        self.calls: list[bytes] = []
+        self.second_call_started = threading.Event()
+        self.release_second_call = threading.Event()
+        self._lock = threading.Lock()
+
+    def transcribe_audio(self, audio_bytes: bytes) -> str:
+        with self._lock:
+            self.calls.append(audio_bytes)
+            call_index = len(self.calls)
+
+        if call_index == 2:
+            self.second_call_started.set()
+            self.release_second_call.wait(10.0)
+        return f"raw text {call_index}"
+
+
+class FakeMerger:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        new_raw_text = joined_section_text(new_raw_sections)
+        self.calls.append(
+            {
+                "existing": existing_smoothed_text,
+                "new_raw": new_raw_text,
+                "recent_raw": recent_raw_context,
+                "context": current_context_summary,
+                "section_count": str(len(new_raw_sections)),
+                "sequences": ",".join(str(section.sequence) for section in new_raw_sections),
+            }
+        )
+        return TranscriptMergeResult(
+            smoothed_text=(existing_smoothed_text + " " + new_raw_text.replace("um ", "")).strip(),
+            feedback=["removed filler"],
+            thoughts=["merge debug"],
+        )
+
+
+class BlockingMerger:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+        self.first_call_started = threading.Event()
+        self.release_first_call = threading.Event()
+        self._lock = threading.Lock()
+
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        new_raw_text = joined_section_text(new_raw_sections)
+        with self._lock:
+            self.calls.append(
+                {
+                    "existing": existing_smoothed_text,
+                    "new_raw": new_raw_text,
+                    "recent_raw": recent_raw_context,
+                    "context": current_context_summary,
+                    "section_count": str(len(new_raw_sections)),
+                    "sequences": ",".join(str(section.sequence) for section in new_raw_sections),
+                }
+            )
+            call_index = len(self.calls)
+
+        if call_index == 1:
+            self.first_call_started.set()
+            self.release_first_call.wait(10.0)
+
+        return TranscriptMergeResult(
+            smoothed_text=(existing_smoothed_text + " " + new_raw_text).strip(),
+            feedback=[f"merged {call_index}"],
+            thoughts=[f"thought {call_index}"],
+        )
+
+
+class RecordingMerger:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        new_raw_text = joined_section_text(new_raw_sections)
+        self.calls.append(
+            {
+                "existing": existing_smoothed_text,
+                "new_raw": new_raw_text,
+                "recent_raw": recent_raw_context,
+                "context": current_context_summary,
+                "section_count": str(len(new_raw_sections)),
+                "sequences": ",".join(str(section.sequence) for section in new_raw_sections),
+            }
+        )
+        return TranscriptMergeResult(
+            smoothed_text=(existing_smoothed_text + " " + new_raw_text).strip(),
+            feedback=[],
+            thoughts=[],
+        )
+
+
+class ContextMerger:
+    def __init__(self, responses: list[TranscriptMergeResult]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, str]] = []
+
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        self.calls.append(
+            {
+                "existing": existing_smoothed_text,
+                "new_raw": joined_section_text(new_raw_sections),
+                "recent_raw": recent_raw_context,
+                "context": current_context_summary,
+            }
+        )
+        return self.responses.pop(0)
+
+
+class FailingMerger:
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        raise AssertionError("non-speech transcript should not reach the merger")
+
+
+def make_turn(name: bytes, peak_level: float = 0.4) -> AudioTurn:
+    return AudioTurn(
+        wav_bytes=name,
+        duration_seconds=1.2,
+        speech_seconds=0.9,
+        peak_level=peak_level,
+    )
+
+
+def joined_section_text(sections: list[TranscriptSection]) -> str:
+    return " ".join(section.text for section in sections)
+
+
+def wait_for(predicate: object, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():  # type: ignore[operator]
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class VoicePrototypeTests(unittest.TestCase):
+    def test_start_command_processes_scripted_turn_and_updates_state(self) -> None:
+        turn = make_turn(b"wav")
+        stt = FakeStt(["um prototype text"])
+        merger = FakeMerger()
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([turn]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(stt.calls, [b"wav"])
+        self.assertEqual(merger.calls[0]["new_raw"], "um prototype text")
+        self.assertEqual(merger.calls[0]["section_count"], "1")
+        self.assertEqual(merger.calls[0]["sequences"], "1")
+        self.assertEqual(state["raw_transcripts"][0]["text"], "um prototype text")
+        self.assertEqual(state["raw_transcripts"][0]["sequence"], 1)
+        self.assertEqual(state["smoothed_text"], "prototype text")
+        self.assertEqual(state["feedback"][0]["text"], "removed filler")
+        self.assertEqual(state["thoughts"][0]["text"], "merge debug")
+        self.assertNotIn("merge debug", state["smoothed_text"])
+
+    def test_stop_command_sets_stopped_status(self) -> None:
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([]),
+            stt=FakeStt([]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StopAutomaticCapture"))
+
+        state = controller.snapshot()
+        self.assertFalse(state["running"])
+        self.assertEqual(state["status"], "stopped")
+
+    def test_blank_audio_is_discarded_before_raw_text_and_llm_merge(self) -> None:
+        turn = make_turn(b"wav")
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([turn]),
+            stt=FakeStt(["BLANK_AUDIO"]),  # type: ignore[arg-type]
+            merger=FailingMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(state["raw_transcripts"], [])
+        self.assertEqual(state["smoothed_text"], "")
+        self.assertEqual(state["discarded_transcriptions"][0]["text"], "BLANK_AUDIO")
+        self.assertEqual(state["discarded_transcriptions"][0]["reason"], "non_speech_sentinel")
+
+    def test_audio_caption_artifact_is_discarded_before_raw_text_and_llm_merge(self) -> None:
+        turn = make_turn(b"wav")
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([turn]),
+            stt=FakeStt(["(upbeat music)"]),  # type: ignore[arg-type]
+            merger=FailingMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(state["raw_transcripts"], [])
+        self.assertEqual(state["smoothed_text"], "")
+        self.assertEqual(state["discarded_transcriptions"][0]["text"], "(upbeat music)")
+        self.assertEqual(state["discarded_transcriptions"][0]["reason"], "non_content_artifact")
+
+    def test_no_audio_turn_is_discarded_before_stt(self) -> None:
+        turn = AudioTurn(
+            wav_bytes=b"",
+            duration_seconds=0.0,
+            speech_seconds=0.0,
+            peak_level=0.0,
+        )
+        stt = FakeStt(["should not be called"])
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([turn]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=FailingMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(stt.calls, [])
+        self.assertEqual(state["raw_transcripts"], [])
+        self.assertEqual(state["discarded_turns"][0]["reason"], "empty_audio")
+
+    def test_low_peak_turn_is_discarded_before_stt(self) -> None:
+        turn = AudioTurn(
+            wav_bytes=b"wav",
+            duration_seconds=1.0,
+            speech_seconds=0.8,
+            peak_level=0.001,
+        )
+        stt = FakeStt(["should not be called"])
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([turn]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=FailingMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(stt.calls, [])
+        self.assertEqual(state["discarded_turns"][0]["reason"], "low_peak_level")
+
+    def test_capture_worker_queues_turns_while_stt_is_busy(self) -> None:
+        stt = BlockingStt()
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"wav-1"), make_turn(b"wav-2")]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(stt.first_call_started.wait(2.0))
+        self.assertTrue(
+            wait_for(
+                lambda: sum(1 for event in controller.snapshot()["events"] if event["type"] == "SpeechTurnCompleted") == 2
+            )
+        )
+
+        state_while_blocked = controller.snapshot()
+        self.assertEqual(stt.calls, [b"wav-1"])
+        self.assertEqual(state_while_blocked["raw_transcripts"], [])
+        self.assertEqual(state_while_blocked["queue_depths"]["audio_turn_queue"], 1)
+
+        stt.release_first_call.set()
+        self.assertTrue(controller.wait_until_idle())
+        self.assertEqual(stt.calls, [b"wav-1", b"wav-2"])
+
+    def test_stt_worker_batches_accumulated_raw_text_for_merge(self) -> None:
+        stt = FakeStt(["raw one", "raw two"])
+        merger = RecordingMerger()
+        config = SecretaryConfig(llm_merge_idle_seconds=0.05, worker_poll_seconds=0.01)
+        controller = PrototypeController(
+            config=config,
+            turn_source=ScriptedTurnSource([make_turn(b"wav-1"), make_turn(b"wav-2")]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        self.assertEqual(len(merger.calls), 1)
+        self.assertEqual(merger.calls[0]["new_raw"], "raw one raw two")
+        self.assertEqual(merger.calls[0]["section_count"], "2")
+        self.assertEqual(merger.calls[0]["sequences"], "1,2")
+        self.assertEqual(controller.snapshot()["smoothed_text"], "raw one raw two")
+
+    def test_merge_waits_while_stt_is_active(self) -> None:
+        stt = BlockingSecondStt()
+        merger = RecordingMerger()
+        config = SecretaryConfig(llm_merge_idle_seconds=0.05, worker_poll_seconds=0.01)
+        controller = PrototypeController(
+            config=config,
+            turn_source=ScriptedTurnSource([make_turn(b"wav-1"), make_turn(b"wav-2")]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(stt.second_call_started.wait(2.0))
+        time.sleep(0.1)
+
+        state_while_stt_blocked = controller.snapshot()
+        self.assertEqual(merger.calls, [])
+        self.assertTrue(
+            any(
+                event["type"] == "TranscriptMergeDeferred"
+                and event["payload"]["reason"] in {"audio_turn_backlog", "transcription_active"}
+                for event in state_while_stt_blocked["events"]
+            )
+        )
+
+        stt.release_second_call.set()
+        self.assertTrue(controller.wait_until_idle())
+        self.assertEqual([call["new_raw"] for call in merger.calls], ["raw text 1 raw text 2"])
+        self.assertEqual(merger.calls[0]["section_count"], "2")
+        self.assertEqual(merger.calls[0]["sequences"], "1,2")
+
+    def test_controller_passes_updated_context_summary_to_next_merge(self) -> None:
+        stt = FakeStt(["first topic words", "same topic correction"])
+        merger = ContextMerger(
+            [
+                TranscriptMergeResult(
+                    smoothed_text="First topic words.",
+                    context_summary="first topic context",
+                    context_action="continue",
+                ),
+                TranscriptMergeResult(
+                    smoothed_text="First topic words. Same topic correction.",
+                    context_summary="updated first topic context",
+                    context_action="continue",
+                ),
+            ]
+        )
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"wav")]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        self.assertEqual(merger.calls[0]["context"], "")
+        self.assertEqual(merger.calls[1]["context"], "first topic context")
+        self.assertEqual(controller.snapshot()["context_summary"], "updated first topic context")
+
+    def test_context_renew_seals_prior_context_into_committed_and_full_log(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        log_path = os.path.join(tmp.name, "full.log")
+        config = SecretaryConfig(prototype_log_path=log_path)
+        merger = ContextMerger(
+            [
+                TranscriptMergeResult(smoothed_text="First topic cleaned.", context_summary="first", context_action="continue"),
+                TranscriptMergeResult(smoothed_text="Second topic cleaned.", context_summary="second", context_action="renew"),
+            ]
+        )
+        stt = FakeStt(["first topic raw", "second topic raw"])
+        controller = PrototypeController(
+            config=config,
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=stt,  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        first = controller.snapshot()
+        self.assertEqual(first["smoothed_text"], "First topic cleaned.")
+        self.assertEqual(first["committed_text"], "")
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        second = controller.snapshot()
+
+        # Main panel resets to the new context; prior context is preserved in
+        # committed history and the durable full-text log.
+        self.assertEqual(second["smoothed_text"], "Second topic cleaned.")
+        self.assertIn("First topic cleaned.", second["committed_text"])
+
+        with open(log_path, encoding="utf-8") as handle:
+            log_text = handle.read()
+        self.assertIn("First topic cleaned.", log_text)
+        self.assertIn("context_renew", log_text)
+
+    def test_merge_is_not_deferred_by_active_audio_alone(self) -> None:
+        # Streaming change: cleanup must run between STT calls during a long utterance,
+        # not wait for the speaker to pause. Only STT activity / backlog defers merge.
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([]),
+            stt=FakeStt([]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+        controller.state.audio_detected = True
+        controller.state.in_speech_turn = True
+
+        self.assertEqual(controller._merge_wait_reason(), "")
+
+    def test_update_worker_option_command_retunes_sensitivity(self) -> None:
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([]),
+            stt=FakeStt([]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+
+        controller.handle_command(
+            AssistantCommand(
+                type="UpdateWorkerOption",
+                payload={"options": {"energy_threshold": 0.001, "transcription_min_peak_level": 0.0005}},
+            )
+        )
+
+        options = controller.snapshot()["worker_options"]
+        self.assertEqual(options["energy_threshold"], 0.001)
+        self.assertEqual(options["transcription_min_peak_level"], 0.0005)
+        # The shared, mutable VAD config the capture loop reads is updated live.
+        self.assertEqual(controller._vad.energy_threshold, 0.001)
+        self.assertEqual(controller._vad.transcription_min_peak_level, 0.0005)
+
+    def test_background_cue_is_stripped_before_raw_transcript_and_merge(self) -> None:
+        merger = RecordingMerger()
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["call Alice (coughing) tomorrow"]),  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(state["raw_transcripts"][0]["text"], "call Alice tomorrow")
+        self.assertEqual(merger.calls[0]["new_raw"], "call Alice tomorrow")
+
+    def test_pure_background_cue_turn_is_discarded_before_merge(self) -> None:
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["(coughing)"]),  # type: ignore[arg-type]
+            merger=FailingMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        state = controller.snapshot()
+
+        self.assertEqual(state["raw_transcripts"], [])
+        self.assertEqual(state["discarded_transcriptions"][0]["text"], "(coughing)")
+        self.assertEqual(state["discarded_transcriptions"][0]["reason"], "non_content_artifact")
+
+    def test_stop_seals_working_transcript_to_full_log(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        log_path = os.path.join(tmp.name, "full.log")
+        config = SecretaryConfig(prototype_log_path=log_path)
+        controller = PrototypeController(
+            config=config,
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["hello world"]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        controller.handle_command(AssistantCommand(type="StopAutomaticCapture"))
+
+        with open(log_path, encoding="utf-8") as handle:
+            log_text = handle.read()
+        self.assertIn("hello world", log_text)
+        self.assertIn("session_stop", log_text)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import requests
 
@@ -24,6 +24,7 @@ class KoboldCppProfile:
     api_base: str
     version: str | None = None
     model_id: str | None = None
+    context_limit_tokens: int | None = None
     protected: bool = False
     capabilities: dict[str, bool] = field(default_factory=dict)
     routes: frozenset[str] = frozenset()
@@ -42,6 +43,7 @@ class KoboldCppProfile:
             "api_base": self.api_base,
             "version": self.version,
             "model_id": self.model_id,
+            "context_limit_tokens": self.context_limit_tokens,
             "protected": self.protected,
             "capabilities": dict(sorted(self.capabilities.items())),
             "routes": sorted(self.routes),
@@ -49,6 +51,45 @@ class KoboldCppProfile:
             "stt": {"style": self.stt_style, "endpoint": self.stt_endpoint},
             "tts": {"style": self.tts_style, "endpoint": self.tts_endpoint},
         }
+
+
+@runtime_checkable
+class KoboldCppApi(Protocol):
+    def chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        model: str = "kcpp",
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        ...
+
+    def transcribe_wav(
+        self,
+        audio_bytes: bytes,
+        model: str = "kcpp",
+        prompt: str = "",
+        language: str = "en",
+        suppress_non_speech: bool = False,
+    ) -> str:
+        ...
+
+    def synthesize_speech(
+        self,
+        text: str,
+        model: str = "kcpp",
+        voice: str = "alloy",
+        instruction: str = "",
+        speaker_json: str | None = None,
+    ) -> bytes:
+        ...
+
+    def health(self) -> dict[str, Any]:
+        ...
+
+    def refresh_profile(self) -> KoboldCppProfile:
+        ...
 
 
 class KoboldCppDiscovery:
@@ -67,7 +108,8 @@ class KoboldCppDiscovery:
     def discover(self) -> KoboldCppProfile:
         version_payload = self._get_json("/api/extra/version", required=True)
         routes = self._fetch_api_routes()
-        model_id = self._fetch_model_id()
+        model_id, model_payloads = self._fetch_model_metadata()
+        context_limit_tokens = self._fetch_context_limit([version_payload, *model_payloads])
         capabilities = self._extract_capabilities(version_payload)
 
         llm_style, llm_endpoint = self._select_endpoint(
@@ -96,6 +138,7 @@ class KoboldCppDiscovery:
             api_base=self.api_base,
             version=self._string_or_none(version_payload.get("version")),
             model_id=model_id,
+            context_limit_tokens=context_limit_tokens,
             protected=bool(version_payload.get("protected", False)),
             capabilities=capabilities,
             routes=frozenset(routes),
@@ -128,16 +171,38 @@ class KoboldCppDiscovery:
             return fallback_style, fallback_path
         return "unavailable", ""
 
-    def _fetch_model_id(self) -> str | None:
+    def _fetch_model_metadata(self) -> tuple[str | None, list[dict[str, Any]]]:
+        payloads: list[dict[str, Any]] = []
         models_payload = self._get_json("/v1/models", required=False)
+        if models_payload:
+            payloads.append(models_payload)
         data = models_payload.get("data")
         if isinstance(data, list) and data:
             first_model = data[0]
             if isinstance(first_model, dict):
-                return self._string_or_none(first_model.get("id"))
+                payloads.append(first_model)
+                return self._string_or_none(first_model.get("id")), payloads
 
         model_payload = self._get_json("/api/v1/model", required=False)
-        return self._string_or_none(model_payload.get("result"))
+        if model_payload:
+            payloads.append(model_payload)
+        return self._string_or_none(model_payload.get("result")), payloads
+
+    def _fetch_context_limit(self, seed_payloads: list[dict[str, Any]]) -> int | None:
+        payloads = list(seed_payloads)
+        for path in (
+            "/api/extra/true_max_context_length",
+            "/api/v1/config",
+            "/api/extra/config",
+            "/props",
+        ):
+            payload = self._get_json(path, required=False)
+            if payload:
+                if path == "/api/extra/true_max_context_length":
+                    value = payload.get("result") or payload.get("value") or payload.get("max_context_length")
+                    payload = {"true_max_context_length": value}
+                payloads.append(payload)
+        return self._extract_context_limit(payloads)
 
     def _fetch_api_routes(self) -> set[str]:
         routes: set[str] = set()
@@ -202,6 +267,50 @@ class KoboldCppDiscovery:
             for key, value in payload.items()
             if key not in ignored and isinstance(value, bool)
         }
+
+    @classmethod
+    def _extract_context_limit(cls, payloads: list[dict[str, Any]]) -> int | None:
+        candidates: list[int] = []
+        for payload in payloads:
+            candidates.extend(cls._walk_context_limits(payload))
+        return max(candidates) if candidates else None
+
+    @classmethod
+    def _walk_context_limits(cls, value: Any, key: str = "") -> list[int]:
+        normalized_key = re.sub(r"[^a-z0-9]+", "", key.lower())
+        context_keys = {
+            "contextsize",
+            "contextlength",
+            "contextlimit",
+            "contextwindow",
+            "maxcontext",
+            "maxcontextlength",
+            "maxcontexttokens",
+            "nctx",
+            "nctxtrain",
+            "truemaxcontextlength",
+        }
+
+        if isinstance(value, dict):
+            found: list[int] = []
+            for item_key, item_value in value.items():
+                found.extend(cls._walk_context_limits(item_value, str(item_key)))
+            return found
+        if isinstance(value, list):
+            found = []
+            for item in value:
+                found.extend(cls._walk_context_limits(item, key))
+            return found
+        if normalized_key not in context_keys:
+            return []
+
+        try:
+            candidate = int(float(str(value)))
+        except (TypeError, ValueError):
+            return []
+        if candidate < 512:
+            return []
+        return [candidate]
 
     @staticmethod
     def _extract_routes_from_text(text: str) -> set[str]:
