@@ -115,6 +115,8 @@ class ModuleWrapperTests(unittest.TestCase):
         self.assertEqual(clean_transcript_artifacts("(coughing)"), "")
         self.assertEqual(clean_transcript_artifacts("♪ music ♪"), "")
         self.assertEqual(clean_transcript_artifacts("[BLANK_AUDIO]"), "")
+        self.assertEqual(clean_transcript_artifacts("*clicks*"), "")
+        self.assertEqual(clean_transcript_artifacts("hello *laughs* there"), "hello there")
 
     def test_dedup_overlap_trims_repeated_prefix(self) -> None:
         self.assertEqual(dedup_overlap("budget of forty two to the", "to the meeting tomorrow"), "meeting tomorrow")

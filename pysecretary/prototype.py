@@ -425,6 +425,9 @@ class PrototypeController:
             for feedback in result.feedback:
                 self._emit("MergeFeedbackReceived", turn_id=turn_id, turn_ids=turn_ids, text=feedback)
 
+        tail = editable_tail.strip()
+        tail_sentence_end = (not tail) or tail.endswith((".", "!", "?", ":", ";"))
+
         if stopping or not region:
             # Shutting down, or cleanup produced nothing usable (e.g. the model returned
             # empty/garbled output): never drop the user's words — append the raw text to the
@@ -433,20 +436,26 @@ class PrototypeController:
             full_text = combine_stable_prefix(current, raw_new) if raw_new else current
             context_summary = current_context_summary
             context_action = "continue"
-        elif result.context_action in ("renew", "paragraph") and current.strip():
-            # Settle the whole current transcript and start a new paragraph from the new
-            # sections. The model sometimes (wrongly) re-emits the editable tail when it opens
-            # a paragraph; trim that repeated lead so the prior text is not duplicated.
-            appended = trim_repeated_prefix(editable_tail, region).strip() if editable_tail.strip() else region
+        elif result.context_action in ("renew", "paragraph") and current.strip() and tail_sentence_end:
+            # New paragraph at a real sentence boundary. The model sometimes (wrongly)
+            # re-emits the editable tail; trim that repeated lead so prior text is not
+            # duplicated.
+            appended = trim_repeated_prefix(editable_tail, region).strip() if tail else region.strip()
             full_text = f"{current.rstrip()}\n\n{appended}" if appended else current
             context_summary = result.context_summary
             context_action = result.context_action
         else:
-            # Continue: the region is the corrected hot tail merged with the new sections;
-            # splice it after the frozen head so the seam (and split sentences) are fixed.
+            # Continue — or a paragraph/renew the model wrongly chose mid-sentence (you cannot
+            # start a new paragraph in the middle of a sentence). Splice the region in place of
+            # the editable tail so the seam (and split words/numbers) are repaired, not
+            # appended as a duplicate.
             full_text = combine_stable_prefix(head, region)
             context_summary = result.context_summary
-            context_action = result.context_action
+            context_action = (
+                "continue"
+                if result.context_action in ("renew", "paragraph") and not tail_sentence_end
+                else result.context_action
+            )
 
         if full_text != current:
             self._write_full_transcript_log(full_text)

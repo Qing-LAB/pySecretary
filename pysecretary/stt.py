@@ -280,6 +280,10 @@ def clean_transcript_artifacts(text: str) -> str:
     for pattern in _CUE_SEGMENT_PATTERNS:
         cleaned = pattern.sub(_drop_cue_segment, cleaned)
 
+    # Asterisk-wrapped stage directions (e.g. "*clicks*", "*laughs*") are always sound/action
+    # cues from the transcriber, never spoken content.
+    cleaned = re.sub(r"\*[^*\n]+\*", "", cleaned)
+
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
     return cleaned.strip().strip("-–—").strip()

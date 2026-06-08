@@ -632,6 +632,32 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertIn("tail_in", merge)
         self.assertEqual(merge["sections"], ["hello world here"])
 
+    def test_midsentence_paragraph_is_spliced_not_appended(self) -> None:
+        # A partial cut mid-number, then the model returns the corrected continuation but
+        # labels it a paragraph. Because the tail ends mid-sentence, it must be spliced in
+        # place (no paragraph break, "four" replaced) instead of appended as a duplicate.
+        merger = ContextMerger(
+            [
+                TranscriptMergeResult(smoothed_text="Intro sentence. Moving from the budget of four", context_action="continue"),
+                TranscriptMergeResult(smoothed_text="Moving from the budget of forty two.", context_action="paragraph"),
+            ]
+        )
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["intro", "more"]),  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        text = str(controller.snapshot()["smoothed_text"])
+        self.assertIn("forty two", text)
+        self.assertNotIn("of four", text)  # the truncated tail was replaced, not duplicated
+        self.assertNotIn("\n\n", text)  # no paragraph break inserted mid-sentence
+
     def test_drain_pending_as_raw_preserves_queued_text(self) -> None:
         from pysecretary.llm_queue import LLMRequest
         from pysecretary.prototype import QueuedRawTranscript
