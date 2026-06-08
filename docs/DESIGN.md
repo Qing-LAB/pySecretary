@@ -109,6 +109,7 @@ covered by `tests/test_config.py`):
 - Long-speech streaming: `PSEC_PARTIAL_TURN_SECONDS`, `PSEC_PARTIAL_OVERLAP_SECONDS`
   (flush in-progress turns with overlap so STT/cleanup update in near real time).
 - Merge/scheduling: `PSEC_LLM_MERGE_IDLE_SECONDS`, `PSEC_LLM_MERGE_MAX_TOKENS`,
+  `PSEC_LLM_MERGE_MAX_SECTIONS` (cap sections per cleanup call so output is not truncated),
   `PSEC_LLM_DISABLE_THINKING` (skip `<think>` generation to cut latency),
   `PSEC_WORKER_POLL_SECONDS`.
 - Transcript seam (re-editable hot tail): `PSEC_MERGE_LOOKBACK_SENTENCES`,

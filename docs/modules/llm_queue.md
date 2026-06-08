@@ -37,8 +37,10 @@ together. `depends_on`/`sequence` record order within a context.
 ## Coalescing And Dispatch Rules
 
 - Each `context_key` has its own pending list and a single in-flight slot.
-- `begin(context_key)` claims **all** currently-pending requests for that context, sorted by
-  `sequence`, as one batch, and marks the context in flight.
+- `begin(context_key, max_items=None)` claims pending requests for that context, sorted by
+  `sequence`, as one batch, and marks the context in flight. With `max_items` set it claims at
+  most that many and leaves the rest pending — bounding how much one LLM call must produce so
+  its output is not truncated (the prototype passes `llm_merge_max_sections`).
 - While a context is in flight it is not dispatchable; requests submitted meanwhile
   accumulate and are coalesced on the next `begin`.
 - `complete(context_key, state=...)` releases the slot and optionally stores carried state
@@ -55,7 +57,7 @@ pending_count(context_key: str | None = None) -> int
 is_in_flight(context_key: str) -> bool
 dispatchable_contexts() -> list[str]
 peek(context_key: str) -> LLMRequest | None
-begin(context_key: str) -> list[LLMRequest] | None     # claim coalesced batch
+begin(context_key: str, max_items: int | None = None) -> list[LLMRequest] | None  # claim batch (optionally bounded)
 complete(context_key: str, state: Any = <unset>) -> None
 get_state(context_key) -> Any ; set_state(context_key, state) -> None
 clear(context_key: str | None = None) -> None

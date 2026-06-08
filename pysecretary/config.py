@@ -27,7 +27,8 @@ class SecretaryConfig:
     partial_overlap_seconds: float = 1.0
     transcription_min_peak_level: float = 0.004
     llm_merge_idle_seconds: float = 0.75
-    llm_merge_max_tokens: int = 384
+    llm_merge_max_tokens: int = 1024
+    llm_merge_max_sections: int = 4
     llm_disable_thinking: bool = True
     merge_lookback_sentences: int = 1
     merge_lookback_words: int = 40
@@ -63,7 +64,8 @@ class SecretaryConfig:
             partial_overlap_seconds=float(os.getenv("PSEC_PARTIAL_OVERLAP_SECONDS", "1.0")),
             transcription_min_peak_level=float(os.getenv("PSEC_TRANSCRIPTION_MIN_PEAK_LEVEL", "0.004")),
             llm_merge_idle_seconds=float(os.getenv("PSEC_LLM_MERGE_IDLE_SECONDS", "0.75")),
-            llm_merge_max_tokens=int(os.getenv("PSEC_LLM_MERGE_MAX_TOKENS", "384")),
+            llm_merge_max_tokens=int(os.getenv("PSEC_LLM_MERGE_MAX_TOKENS", "1024")),
+            llm_merge_max_sections=int(os.getenv("PSEC_LLM_MERGE_MAX_SECTIONS", "4")),
             llm_disable_thinking=os.getenv("PSEC_LLM_DISABLE_THINKING", "1").lower() in ("1", "true", "yes"),
             merge_lookback_sentences=int(os.getenv("PSEC_MERGE_LOOKBACK_SENTENCES", "1")),
             merge_lookback_words=int(os.getenv("PSEC_MERGE_LOOKBACK_WORDS", "40")),

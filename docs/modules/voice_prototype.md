@@ -162,8 +162,12 @@ Required scheduling behavior for this single-server prototype:
   smoothed transcript updates in near real time;
 - while merge is running, new raw transcript sections accumulate in the coalescing LLM
   request queue ([`llm_queue.md`](llm_queue.md)) rather than triggering overlapping calls;
-- after the previous cleanup returns, the merge worker claims the coalesced pending sections
-  and processes them as one chronological batch;
+- after the previous cleanup returns, the merge worker claims a **bounded** batch of the
+  coalesced pending sections (at most `llm_merge_max_sections`) so a single cleanup call's
+  output is never truncated; the remainder is processed by the next call;
+- **the raw transcript text is the floor and is never dropped**: if cleanup returns nothing
+  usable (empty/garbled), the raw section text is appended to the transcript instead; on
+  stop, any still-queued sections are flushed as raw rather than discarded;
 - deferred merge work emits `TranscriptMergeDeferred` so the UI/CLI can show that cleanup
   is waiting (on STT) rather than lost;
 - merge prompts request compact JSON, cap output tokens, and disable model thinking
@@ -179,6 +183,7 @@ Scheduling fields:
 
 - `llm_merge_idle_seconds`: STT-idle/backlog-free time before LLM cleanup may start,
 - `llm_merge_max_tokens`: output cap for merge cleanup requests,
+- `llm_merge_max_sections`: max raw sections per cleanup call (bounds batch so output is not truncated),
 - `llm_disable_thinking`: skip the model's `<think>` generation to cut cleanup latency,
 - `partial_turn_seconds` / `partial_overlap_seconds`: long-speech streaming cadence/overlap,
 - `worker_poll_seconds`: worker wait-loop polling interval.

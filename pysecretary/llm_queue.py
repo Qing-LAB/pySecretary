@@ -87,18 +87,26 @@ class LLMRequestQueue:
                 return None
             return min(ctx.pending, key=lambda request: request.sequence)
 
-    def begin(self, context_key: str) -> list[LLMRequest] | None:
-        """Coalesce and claim all pending requests for a context, in dependency order.
+    def begin(self, context_key: str, max_items: int | None = None) -> list[LLMRequest] | None:
+        """Coalesce and claim pending requests for a context, in dependency order.
 
         Returns the combined batch (sorted by ``sequence``) and marks the context in flight,
-        or ``None`` if the context has no pending work or is already in flight.
+        or ``None`` if the context has no pending work or is already in flight. With
+        ``max_items`` set (> 0), at most that many requests are claimed and the rest stay
+        pending for the next dispatch — this bounds how much one LLM call must handle so its
+        output is not truncated.
         """
         with self._lock:
             ctx = self._contexts.get(context_key)
             if not ctx or ctx.in_flight or not ctx.pending:
                 return None
-            batch = sorted(ctx.pending, key=lambda request: request.sequence)
-            ctx.pending = []
+            ordered = sorted(ctx.pending, key=lambda request: request.sequence)
+            if max_items is not None and max_items > 0:
+                batch = ordered[:max_items]
+                ctx.pending = ordered[max_items:]
+            else:
+                batch = ordered
+                ctx.pending = []
             ctx.in_flight = True
             return batch
 

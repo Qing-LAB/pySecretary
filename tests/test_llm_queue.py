@@ -51,6 +51,19 @@ class LLMRequestQueueTests(unittest.TestCase):
         batch = q.begin("a")
         self.assertEqual([r.payload for r in batch], ["second", "third"])
 
+    def test_begin_bounds_batch_with_max_items(self) -> None:
+        q = LLMRequestQueue()
+        for i in range(5):
+            q.submit(req("a", i, f"s{i}"))
+
+        batch = q.begin("a", max_items=2)
+        self.assertEqual([r.payload for r in batch], ["s0", "s1"])
+        self.assertEqual(q.pending_count("a"), 3)  # remainder stays pending
+
+        q.complete("a")
+        batch2 = q.begin("a", max_items=2)
+        self.assertEqual([r.payload for r in batch2], ["s2", "s3"])
+
     def test_complete_carries_state_for_next_batch(self) -> None:
         q = LLMRequestQueue()
         q.submit(req("a", 1, "first"))

@@ -196,6 +196,19 @@ class TailMerger:
         return TranscriptMergeResult(smoothed_text=combined, context_action="continue")
 
 
+class EmptyMerger:
+    """Simulates the model returning nothing usable (empty/garbled cleanup)."""
+
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        return TranscriptMergeResult(smoothed_text="", feedback=[], thoughts=[])
+
+
 class FailingMerger:
     def merge(
         self,
@@ -531,6 +544,49 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertEqual(state["smoothed_text"], "First note.\n\nSecond note.")
         # paragraph keeps the same topic context (only renew would clear/replace it).
         self.assertEqual(state["context_summary"], "topic")
+
+    def test_empty_cleanup_falls_back_to_raw_text(self) -> None:
+        # If the model returns nothing usable, the speaker's words must still appear (raw).
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["hello there world"]),  # type: ignore[arg-type]
+            merger=EmptyMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        self.assertIn("hello there world", controller.snapshot()["smoothed_text"])
+
+    def test_drain_pending_as_raw_preserves_queued_text(self) -> None:
+        from pysecretary.llm_queue import LLMRequest
+        from pysecretary.prototype import QueuedRawTranscript
+
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([]),
+            stt=FakeStt([]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+        controller._merge_queue.submit(
+            LLMRequest(
+                context_key=controller._context_key,
+                sequence=1,
+                payload=QueuedRawTranscript(
+                    turn_id="t",
+                    sequence=1,
+                    text="unsent words",
+                    captured_at=0.0,
+                    transcribed_at=0.0,
+                    duration_seconds=0.0,
+                    speech_seconds=0.0,
+                    peak_level=0.0,
+                ),
+            )
+        )
+
+        controller._drain_pending_as_raw()
+
+        self.assertIn("unsent words", controller.snapshot()["smoothed_text"])
 
     def test_merge_is_not_deferred_by_active_audio_alone(self) -> None:
         # Streaming change: cleanup must run between STT calls during a long utterance,

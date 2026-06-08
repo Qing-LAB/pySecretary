@@ -224,23 +224,29 @@ class PrototypeController:
 
     def _merge_loop(self) -> None:
         poll_seconds = max(0.01, self.config.worker_poll_seconds)
+        max_sections = self.config.llm_merge_max_sections
         try:
             while True:
-                if self._stop_event.is_set():
-                    break
                 if not self._merge_queue.has_pending(self._context_key):
-                    if self._stt_done.is_set():
+                    if self._stop_event.is_set() or self._stt_done.is_set():
                         break
                     sleep(poll_seconds)
                     continue
+
+                if self._stop_event.is_set():
+                    # Shutting down with work still queued: never drop the user's speech —
+                    # append it raw (no LLM) so nothing is lost, then exit.
+                    self._drain_pending_as_raw()
+                    break
 
                 # STT keeps priority on the shared server; wait for a dispatch slot.
                 pending = self._merge_queue.peek(self._context_key)
                 turn_id = pending.payload.turn_id if pending is not None else ""
                 if not self._wait_for_merge_slot(turn_id):
-                    continue  # stopped while waiting; loop re-checks and exits
+                    continue  # stopped while waiting; loop re-checks and drains
 
-                batch = self._merge_queue.begin(self._context_key)
+                # Claim a bounded batch so one cleanup call is never truncated.
+                batch = self._merge_queue.begin(self._context_key, max_sections)
                 if batch is None:
                     continue
                 try:
@@ -373,26 +379,37 @@ class PrototypeController:
             recent_raw_context=self._recent_raw_context(),
             current_context_summary=current_context_summary,
         )
-        if self._stop_event.is_set():
-            return
 
+        raw_new = " ".join(section.text for section in raw_transcripts).strip()
         region = result.smoothed_text.strip()
+        stopping = self._stop_event.is_set()
 
-        for thought in result.thoughts:
-            self._emit("ThoughtCaptured", turn_id=turn_id, turn_ids=turn_ids, text=thought)
-        for feedback in result.feedback:
-            self._emit("MergeFeedbackReceived", turn_id=turn_id, turn_ids=turn_ids, text=feedback)
+        if not stopping:
+            for thought in result.thoughts:
+                self._emit("ThoughtCaptured", turn_id=turn_id, turn_ids=turn_ids, text=thought)
+            for feedback in result.feedback:
+                self._emit("MergeFeedbackReceived", turn_id=turn_id, turn_ids=turn_ids, text=feedback)
 
-        if not region:
-            full_text = current
+        if stopping or not region:
+            # Shutting down, or cleanup produced nothing usable (e.g. the model returned
+            # empty/garbled output): never drop the user's words — append the raw text to the
+            # full transcript so nothing is lost. The raw text is the floor; cleanup is an
+            # enhancement on top of it.
+            full_text = combine_stable_prefix(current, raw_new) if raw_new else current
+            context_summary = current_context_summary
+            context_action = "continue"
         elif result.context_action in ("renew", "paragraph") and current.strip():
             # Settle the whole current transcript and start a new paragraph from the new
             # sections. (renew also renews the context summary in the reducer.)
             full_text = f"{current.rstrip()}\n\n{region}"
+            context_summary = result.context_summary
+            context_action = result.context_action
         else:
             # Continue: the region is the corrected hot tail merged with the new sections;
             # splice it after the frozen head so the seam (and split sentences) are fixed.
             full_text = combine_stable_prefix(head, region)
+            context_summary = result.context_summary
+            context_action = result.context_action
 
         if full_text != current:
             self._write_full_transcript_log(full_text)
@@ -403,10 +420,34 @@ class PrototypeController:
             turn_ids=turn_ids,
             section_count=len(sections),
             text=full_text,
-            context_summary=result.context_summary,
-            context_action=result.context_action,
+            context_summary=context_summary,
+            context_action=context_action,
         )
         self._emit("TranscriptMergeCompleted", turn_id=turn_id, turn_ids=turn_ids, section_count=len(sections))
+
+    def _drain_pending_as_raw(self) -> None:
+        # On shutdown, flush any queued-but-uncleaned sections as raw text so the speaker's
+        # words are preserved even though cleanup did not run.
+        while self._merge_queue.has_pending(self._context_key):
+            batch = self._merge_queue.begin(self._context_key)
+            if batch is None:
+                break
+            try:
+                raw = " ".join(request.payload.text for request in batch).strip()
+                if not raw:
+                    continue
+                current = str(self.snapshot().get("smoothed_text", ""))
+                full_text = combine_stable_prefix(current, raw)
+                if full_text != current:
+                    self._write_full_transcript_log(full_text)
+                    self._emit(
+                        "SmoothedTranscriptUpdated",
+                        text=full_text,
+                        context_summary=str(self.snapshot().get("context_summary", "")),
+                        context_action="continue",
+                    )
+            finally:
+                self._merge_queue.complete(self._context_key)
 
     def _turn_discard_reason(self, turn: AudioTurn) -> str:
         with self._lock:
