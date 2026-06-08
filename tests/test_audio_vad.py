@@ -89,6 +89,38 @@ class AudioVadTests(unittest.TestCase):
         self.assertIsNotNone(final)
         self.assertFalse(final.is_partial)
 
+    def test_partial_flush_overlap_starts_at_recent_short_gap(self) -> None:
+        # 1s speech, a 0.5s pause (>= overlap_min_gap, < silence_gap), then 0.5s speech ->
+        # at 2s the partial flushes and the next segment is seeded from the pause (1.0s of
+        # overlap), not the 0.25s fixed fallback.
+        config = self.audio.AmplitudeVadConfig(
+            sample_rate=4,
+            chunk_seconds=0.25,
+            energy_threshold=0.1,
+            silence_gap_seconds=10,
+            min_speech_seconds=0.25,
+            max_turn_seconds=100,
+            partial_turn_seconds=2.0,
+            partial_overlap_seconds=0.25,
+            partial_overlap_min_gap_seconds=0.5,
+            partial_overlap_max_seconds=2.0,
+        )
+        detector = self.audio.AudioTurnDetector(config)
+
+        partial = None
+        for chunk in ([4000], [4000], [4000], [4000], [0], [0], [4000], [4000]):
+            partial = detector.accept_chunk(chunk)
+        self.assertIsNotNone(partial)
+        self.assertTrue(partial.is_partial)
+        self.assertTrue(detector.in_speech_turn)
+
+        # The retained overlap runs from the pause to the end (4 chunks = 1.0s),
+        # demonstrating the gap-anchored start rather than the 0.25s fixed fallback.
+        final = detector.finish()
+        self.assertIsNotNone(final)
+        self.assertFalse(final.is_partial)
+        self.assertAlmostEqual(final.duration_seconds, 1.0, places=2)
+
     def test_detector_forces_turn_at_max_duration(self) -> None:
         config = self.audio.AmplitudeVadConfig(
             sample_rate=4,

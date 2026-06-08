@@ -59,11 +59,18 @@ The prototype uses amplitude-based VAD first:
 - Force-end a turn if it exceeds `max_turn_seconds`.
 - Drop tiny turns shorter than `min_speech_seconds`.
 - **Flush a partial turn during a long utterance**: while still speaking, once the
-  in-progress turn reaches `partial_turn_seconds`, emit an `AudioTurn` with `is_partial=True`
-  for transcription without ending the turn, retaining `partial_overlap_seconds` of trailing
-  audio so boundary words are not cut. This lets STT and cleanup keep up in near real time
-  instead of waiting for a pause. Set `partial_turn_seconds=0` to disable and fall back to
-  pause/`max_turn` segmentation.
+  in-progress turn reaches `partial_turn_seconds` (default 10s — long enough that Whisper has
+  good context), emit an `AudioTurn` with `is_partial=True` for transcription without ending
+  the turn. This lets STT and cleanup keep up in near real time instead of waiting for a
+  pause. Set `partial_turn_seconds=0` to disable.
+- **Gap-anchored overlap**: when a partial flushes mid-speech, the next segment re-starts from
+  the most recent short pause (a silence run >= `partial_overlap_min_gap_seconds`, default
+  0.3s, found within the last `partial_overlap_max_seconds`), so the overlap begins at a
+  natural boundary instead of mid-word. If no nearby pause exists, it falls back to a fixed
+  `partial_overlap_seconds` trailing overlap. The overlapping audio lets the merge stitch and
+  dedup the boundary words. So a segment is sent when **a gap exceeds `silence_gap_seconds`
+  (turn end) or the turn reaches `partial_turn_seconds`**, and the next segment seeds from the
+  last short gap.
 
 Configurable fields:
 
@@ -74,6 +81,8 @@ Configurable fields:
 - `max_turn_seconds`,
 - `partial_turn_seconds`,
 - `partial_overlap_seconds`,
+- `partial_overlap_min_gap_seconds`,
+- `partial_overlap_max_seconds`,
 - `transcription_min_peak_level`.
 
 This is intentionally simple. If amplitude VAD is too brittle, a later milestone can add a dedicated VAD dependency while preserving the same turn-source interface.

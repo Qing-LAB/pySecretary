@@ -43,8 +43,10 @@ class AmplitudeVadConfig:
     silence_gap_seconds: float = 1.0
     min_speech_seconds: float = 0.25
     max_turn_seconds: float = 20.0
-    partial_turn_seconds: float = 6.0
+    partial_turn_seconds: float = 10.0
     partial_overlap_seconds: float = 1.0
+    partial_overlap_min_gap_seconds: float = 0.3
+    partial_overlap_max_seconds: float = 2.0
     transcription_min_peak_level: float = 0.004
 
     @classmethod
@@ -58,6 +60,8 @@ class AmplitudeVadConfig:
             max_turn_seconds=config.max_turn_seconds,
             partial_turn_seconds=config.partial_turn_seconds,
             partial_overlap_seconds=config.partial_overlap_seconds,
+            partial_overlap_min_gap_seconds=config.partial_overlap_min_gap_seconds,
+            partial_overlap_max_seconds=config.partial_overlap_max_seconds,
             transcription_min_peak_level=config.transcription_min_peak_level,
         )
 
@@ -186,8 +190,13 @@ class AudioTurnDetector:
         speech_seconds = self._speech_seconds
         peak_level = self._peak_level
 
-        # Retain a trailing overlap so the continuing turn re-includes boundary audio.
-        overlap_chunks, overlap_samples = self._tail_chunks(self.config.partial_overlap_seconds)
+        # The next segment re-starts from the most recent short pause (>= overlap_min_gap),
+        # so the overlap begins at a natural boundary instead of mid-word. If no nearby pause
+        # exists, fall back to a fixed trailing overlap.
+        overlap_chunks = self._gap_overlap_chunks()
+        if not overlap_chunks:
+            overlap_chunks, _ = self._tail_chunks(self.config.partial_overlap_seconds)
+        overlap_samples = sum(len(chunk) // 2 for chunk in overlap_chunks)
         overlap_duration = overlap_samples / self.config.sample_rate if self.config.sample_rate else 0.0
         self._chunks = list(overlap_chunks)
         self._duration_seconds = overlap_duration
@@ -206,6 +215,45 @@ class AudioTurnDetector:
             peak_level=peak_level,
             is_partial=True,
         )
+
+    def _gap_overlap_chunks(self) -> list[bytes]:
+        index = self._gap_overlap_index()
+        if index is None:
+            return []
+        return list(self._chunks[index:])
+
+    def _gap_overlap_index(self) -> int | None:
+        """Index of the start of the most recent short pause (>= overlap_min_gap) near the
+        end, within the overlap_max window. Returns None if no such pause is nearby.
+        """
+        sample_rate = self.config.sample_rate
+        min_gap = self.config.partial_overlap_min_gap_seconds
+        max_window = self.config.partial_overlap_max_seconds
+        if sample_rate <= 0 or min_gap <= 0:
+            return None
+
+        def chunk_seconds(chunk: bytes) -> float:
+            return (len(chunk) // 2) / sample_rate
+
+        scanned = 0.0
+        index = len(self._chunks) - 1
+        while index >= 0 and scanned <= max_window:
+            chunk = self._chunks[index]
+            if _pcm_level(chunk) < self.config.energy_threshold:
+                # Measure the contiguous silence run ending at `index`.
+                run_seconds = 0.0
+                start = index
+                while start >= 0 and _pcm_level(self._chunks[start]) < self.config.energy_threshold:
+                    run_seconds += chunk_seconds(self._chunks[start])
+                    start -= 1
+                if run_seconds >= min_gap:
+                    return start + 1  # start of the silence run
+                scanned += run_seconds
+                index = start
+            else:
+                scanned += chunk_seconds(chunk)
+                index -= 1
+        return None
 
     def _tail_chunks(self, seconds: float) -> tuple[list[bytes], int]:
         if seconds <= 0:

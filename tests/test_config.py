@@ -27,8 +27,10 @@ class SecretaryConfigTests(unittest.TestCase):
         self.assertEqual(config.transcription_min_peak_level, 0.004)
         # The keep-gate must not exceed the start threshold, or detected speech is dropped.
         self.assertLessEqual(config.transcription_min_peak_level, config.vad_energy_threshold)
-        self.assertEqual(config.partial_turn_seconds, 6.0)
+        self.assertEqual(config.partial_turn_seconds, 10.0)
         self.assertEqual(config.partial_overlap_seconds, 1.0)
+        self.assertEqual(config.partial_overlap_min_gap_seconds, 0.3)
+        self.assertEqual(config.partial_overlap_max_seconds, 2.0)
         self.assertTrue(config.llm_disable_thinking)
         self.assertEqual(config.merge_lookback_sentences, 1)
         self.assertEqual(config.merge_lookback_words, 40)

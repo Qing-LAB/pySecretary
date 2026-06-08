@@ -23,8 +23,10 @@ class SecretaryConfig:
     silence_gap_seconds: float = 1.0
     min_speech_seconds: float = 0.25
     max_turn_seconds: float = 20.0
-    partial_turn_seconds: float = 6.0
+    partial_turn_seconds: float = 10.0
     partial_overlap_seconds: float = 1.0
+    partial_overlap_min_gap_seconds: float = 0.3
+    partial_overlap_max_seconds: float = 2.0
     transcription_min_peak_level: float = 0.004
     llm_merge_idle_seconds: float = 0.75
     llm_merge_max_tokens: int = 1024
@@ -60,8 +62,10 @@ class SecretaryConfig:
             silence_gap_seconds=float(os.getenv("PSEC_SILENCE_GAP_SECONDS", "1.0")),
             min_speech_seconds=float(os.getenv("PSEC_MIN_SPEECH_SECONDS", "0.25")),
             max_turn_seconds=float(os.getenv("PSEC_MAX_TURN_SECONDS", "20.0")),
-            partial_turn_seconds=float(os.getenv("PSEC_PARTIAL_TURN_SECONDS", "6.0")),
+            partial_turn_seconds=float(os.getenv("PSEC_PARTIAL_TURN_SECONDS", "10.0")),
             partial_overlap_seconds=float(os.getenv("PSEC_PARTIAL_OVERLAP_SECONDS", "1.0")),
+            partial_overlap_min_gap_seconds=float(os.getenv("PSEC_PARTIAL_OVERLAP_MIN_GAP_SECONDS", "0.3")),
+            partial_overlap_max_seconds=float(os.getenv("PSEC_PARTIAL_OVERLAP_MAX_SECONDS", "2.0")),
             transcription_min_peak_level=float(os.getenv("PSEC_TRANSCRIPTION_MIN_PEAK_LEVEL", "0.004")),
             llm_merge_idle_seconds=float(os.getenv("PSEC_LLM_MERGE_IDLE_SECONDS", "0.75")),
             llm_merge_max_tokens=int(os.getenv("PSEC_LLM_MERGE_MAX_TOKENS", "1024")),
