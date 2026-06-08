@@ -16,6 +16,7 @@ from .events import AssistantCommand, AssistantEvent, PrototypeState, make_event
 from .koboldcpp import KoboldCppClient
 from .llm import LLMClient
 from .llm_queue import LLMRequest, LLMRequestQueue
+from .output_bridge import TranscriptSink, make_sink
 from .stt import (
     SpeechToTextClient,
     clean_transcript_artifacts,
@@ -84,6 +85,14 @@ class MicrophoneTurnSource:
         )
 
 
+def _common_prefix_len(a: str, b: str) -> int:
+    limit = min(len(a), len(b))
+    index = 0
+    while index < limit and a[index] == b[index]:
+        index += 1
+    return index
+
+
 class PrototypeController:
     def __init__(
         self,
@@ -91,6 +100,7 @@ class PrototypeController:
         turn_source: AudioTurnSource | None = None,
         stt: SpeechToTextClient | None = None,
         merger: TranscriptMerger | None = None,
+        sink: TranscriptSink | None = None,
     ) -> None:
         self.config = config or SecretaryConfig.from_env()
         self._stop_event = threading.Event()
@@ -111,6 +121,19 @@ class PrototypeController:
         # Shared, mutable VAD/gate thresholds so sensitivity can be re-tuned at runtime
         # (UpdateWorkerOption) while capture keeps reading the same instance.
         self._vad = AmplitudeVadConfig.from_secretary_config(self.config)
+        # Output bridge: deliver finalized text to another program on a SendTranscript
+        # command (push-to-send). `_sent_text` tracks what has already been delivered.
+        if sink is not None:
+            self._sink: TranscriptSink | None = sink
+        else:
+            try:
+                self._sink = make_sink(
+                    self.config.output_sink,
+                    auto_paste=self.config.output_clipboard_autopaste,
+                )
+            except ValueError:
+                self._sink = None
+        self._sent_text = ""
         self.state = PrototypeState()
 
         if stt is None or merger is None:
@@ -133,7 +156,10 @@ class PrototypeController:
         elif command.type == "StopAutomaticCapture":
             self.stop()
         elif command.type == "ClearPrototypeTranscript":
+            self._sent_text = ""
             self._emit("PrototypeTranscriptCleared")
+        elif command.type == "SendTranscript":
+            self._send_transcript()
         elif command.type == "UpdateWorkerOption":
             self._update_worker_options(command.payload)
         else:
@@ -539,6 +565,30 @@ class PrototypeController:
         "max_turn_seconds",
         "transcription_min_peak_level",
     )
+
+    def _send_transcript(self) -> None:
+        # Push-to-send: deliver the text that has not been sent yet to the output sink.
+        current = str(self.snapshot().get("smoothed_text", ""))
+        start = _common_prefix_len(self._sent_text, current)
+        unsent = current[start:].strip()
+        if not unsent:
+            self._emit("TranscriptSent", delivered=False, reason="nothing_new", text="")
+            return
+        if self._sink is None:
+            self._emit(
+                "AssistantError",
+                stage="output",
+                message="No output sink configured. Set PSEC_OUTPUT_SINK to stdout, clipboard, or keystroke.",
+            )
+            return
+        try:
+            self._sink.deliver(unsent)
+        except Exception as exc:  # pragma: no cover - external sink failure
+            self._emit("AssistantError", stage="output", message=f"Output sink failed: {exc}")
+            return
+        self._sent_text = current
+        self._trace("sent", chars=len(unsent), text=unsent)
+        self._emit("TranscriptSent", delivered=True, text=unsent)
 
     def _update_worker_options(self, payload: dict[str, object]) -> None:
         options = payload.get("options") if isinstance(payload.get("options"), dict) else payload

@@ -112,12 +112,13 @@ for emission order):
 `TranscriptionStarted`, `TranscriptionDiscarded`, `RawTranscriptReceived`,
 `TranscriptMergeStarted`, `TranscriptMergeDeferred`, `ThoughtCaptured`,
 `MergeFeedbackReceived`, `SmoothedTranscriptUpdated`, `TranscriptMergeCompleted`,
-`AssistantError`, `PrototypeTranscriptCleared`, `WorkerOptionsChanged`.
+`AssistantError`, `PrototypeTranscriptCleared`, `WorkerOptionsChanged`, `TranscriptSent`.
 
 ## Command Types
 
 `StartAutomaticCapture`, `StopAutomaticCapture`, `ClearPrototypeTranscript`,
-`UpdateWorkerOption`.
+`UpdateWorkerOption`, `SendTranscript` (push finalized text to the output bridge —
+see [`output_bridge.md`](output_bridge.md)).
 
 Commands are accepted only at the controller boundary
 (`PrototypeController.handle_command`). UI widgets must not call workers directly.

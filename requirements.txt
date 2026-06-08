@@ -3,3 +3,5 @@ sounddevice
 soundfile
 numpy
 python-dotenv
+# Output-bridge sinks (keystroke / clipboard / global hotkey) are optional and live in
+# requirements-output.txt — they are imported lazily and only needed for those sinks.

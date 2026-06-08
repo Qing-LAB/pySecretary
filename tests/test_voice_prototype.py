@@ -210,6 +210,14 @@ class EmptyMerger:
         return TranscriptMergeResult(smoothed_text="", feedback=[], thoughts=[])
 
 
+class RecordingSink:
+    def __init__(self) -> None:
+        self.delivered: list[str] = []
+
+    def deliver(self, text: str) -> None:
+        self.delivered.append(text)
+
+
 class FailingMerger:
     def merge(
         self,
@@ -657,6 +665,56 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertIn("forty two", text)
         self.assertNotIn("of four", text)  # the truncated tail was replaced, not duplicated
         self.assertNotIn("\n\n", text)  # no paragraph break inserted mid-sentence
+
+    def test_send_transcript_delivers_only_unsent_text(self) -> None:
+        sink = RecordingSink()
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["hello world"]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+            sink=sink,  # type: ignore[arg-type]
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        controller.handle_command(AssistantCommand(type="SendTranscript"))
+        self.assertEqual(sink.delivered, ["hello world"])
+
+        # Re-sending with no new text delivers nothing.
+        controller.handle_command(AssistantCommand(type="SendTranscript"))
+        self.assertEqual(sink.delivered, ["hello world"])
+
+        # Only the unsent remainder is delivered after the sent marker moves back.
+        controller._sent_text = "hello"
+        controller.handle_command(AssistantCommand(type="SendTranscript"))
+        self.assertEqual(sink.delivered, ["hello world", "world"])
+
+    def test_send_transcript_without_sink_emits_error(self) -> None:
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["hello world"]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )  # no sink configured
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        controller.handle_command(AssistantCommand(type="SendTranscript"))
+
+        errors = controller.snapshot()["errors"]
+        self.assertTrue(errors and errors[-1]["stage"] == "output")
+
+    def test_clear_resets_sent_marker(self) -> None:
+        sink = RecordingSink()
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([]),
+            stt=FakeStt([]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+            sink=sink,  # type: ignore[arg-type]
+        )
+        controller._sent_text = "already sent"
+        controller.handle_command(AssistantCommand(type="ClearPrototypeTranscript"))
+        self.assertEqual(controller._sent_text, "")
 
     def test_drain_pending_as_raw_preserves_queued_text(self) -> None:
         from pysecretary.llm_queue import LLMRequest

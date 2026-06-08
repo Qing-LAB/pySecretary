@@ -30,6 +30,7 @@ const nodes = {
   queueDepth: document.getElementById("queue-depth"),
   start: document.getElementById("start-button"),
   stop: document.getElementById("stop-button"),
+  send: document.getElementById("send-button"),
   clear: document.getElementById("clear-button"),
   meter: document.getElementById("audio-meter"),
   transcript: document.getElementById("transcript"),
@@ -206,6 +207,7 @@ function renderStack(node, items) {
 
 function formatEventLine(event) {
   const p = event.payload || {};
+  if (event.type === "TranscriptSent") return p.delivered ? `sent → ${p.text || ""}` : `send: ${p.reason || "nothing new"}`;
   if (event.type === "TranscriptionDiscarded") return `discarded: ${p.reason || ""} ${p.text || ""}`.trim();
   if (event.type === "SpeechTurnDiscarded") return `turn dropped: ${p.reason || ""}`;
   if (event.type === "TranscriptMergeDeferred") return `merge waiting: ${p.reason || ""}`;
@@ -224,6 +226,9 @@ async function sendCommand(type, payload = {}) {
 nodes.start.addEventListener("click", () => sendCommand("StartAutomaticCapture"));
 nodes.stop.addEventListener("click", () => sendCommand("StopAutomaticCapture"));
 nodes.clear.addEventListener("click", () => sendCommand("ClearPrototypeTranscript"));
+if (nodes.send) {
+  nodes.send.addEventListener("click", () => sendCommand("SendTranscript"));
+}
 
 const optionsForm = document.getElementById("options-form");
 if (optionsForm) {

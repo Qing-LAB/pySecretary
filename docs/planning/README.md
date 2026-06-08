@@ -16,6 +16,7 @@ This directory is pySecretary's persistent planning memory. Keep active roadmap,
 - [`../modules/llm_queue.md`](../modules/llm_queue.md): coalescing LLM request queue contract.
 - [`../modules/context_budget.md`](../modules/context_budget.md): prompt context-window budgeting contract.
 - [`../modules/console.md`](../modules/console.md): CLI status indicator contract.
+- [`../modules/output_bridge.md`](../modules/output_bridge.md): send finalized text to other programs (stdout/clipboard/keystroke).
 - [`../modules/ui.md`](../modules/ui.md): lightweight UI dashboard, streaming feedback, and concurrency contract.
 - [`../deployment/koboldcpp.md`](../deployment/koboldcpp.md): local KoboldCPP runtime contract.
 - [`../testing/strategy.md`](../testing/strategy.md): layered testing strategy.

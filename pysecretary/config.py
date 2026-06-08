@@ -40,6 +40,9 @@ class SecretaryConfig:
     thought_log_path: str = "thoughts.log"
     prototype_log_path: str = "prototype_transcript.log"
     prototype_trace_log_path: str = "prototype_trace.log"
+    output_sink: str = ""
+    output_clipboard_autopaste: bool = False
+    output_hotkey: str = ""
     prototype_host: str = "127.0.0.1"
     prototype_port: int = 8765
     request_timeout: float = 120.0
@@ -80,6 +83,9 @@ class SecretaryConfig:
             thought_log_path=os.getenv("PSEC_THOUGHT_LOG_PATH", "thoughts.log"),
             prototype_log_path=os.getenv("PSEC_PROTOTYPE_LOG_PATH", "prototype_transcript.log"),
             prototype_trace_log_path=os.getenv("PSEC_PROTOTYPE_TRACE_LOG_PATH", "prototype_trace.log"),
+            output_sink=os.getenv("PSEC_OUTPUT_SINK", ""),
+            output_clipboard_autopaste=os.getenv("PSEC_OUTPUT_CLIPBOARD_AUTOPASTE", "0").lower() in ("1", "true", "yes"),
+            output_hotkey=os.getenv("PSEC_OUTPUT_HOTKEY", ""),
             prototype_host=os.getenv("PSEC_PROTOTYPE_HOST", "127.0.0.1"),
             prototype_port=int(os.getenv("PSEC_PROTOTYPE_PORT", "8765")),
             request_timeout=float(os.getenv("PSEC_REQUEST_TIMEOUT", "120")),

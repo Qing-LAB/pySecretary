@@ -1,0 +1,9 @@
+# Optional dependencies for the output bridge (docs/modules/output_bridge.md).
+# Only needed when PSEC_OUTPUT_SINK is "keystroke" or "clipboard", when clipboard
+# auto-paste is enabled, or when a global push-to-send hotkey (PSEC_OUTPUT_HOTKEY) is set.
+# The stdout sink needs none of these. Install with:
+#   uv pip install -r requirements-output.txt   (or: pip install -r requirements-output.txt)
+#
+# Note: pynput pulls in evdev on Linux, which needs C build tools / kernel headers.
+pynput      # keystroke injection + clipboard auto-paste + global hotkey
+pyperclip   # clipboard copy

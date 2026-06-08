@@ -39,11 +39,30 @@ def run_prototype_server(
         raise
     print(f"pySecretary prototype UI listening at http://{host}:{port}")
     status_indicator.start()
+
+    # Optional global push-to-send hotkey: fires SendTranscript even when another window is
+    # focused (so dictation can be inserted into the target app).
+    hotkey_listener = None
+    run_config = config or app_controller.config
+    if getattr(run_config, "output_hotkey", ""):
+        from pysecretary.output_bridge import OutputHotkeyListener
+
+        hotkey_listener = OutputHotkeyListener(
+            run_config.output_hotkey,
+            lambda: app_controller.handle_command(AssistantCommand(type="SendTranscript")),
+        )
+        if hotkey_listener.start():
+            print(f"Push-to-send hotkey active: {run_config.output_hotkey}")
+        else:
+            print("Push-to-send hotkey unavailable (install pynput, or check the hotkey).")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         app_controller.stop()
     finally:
+        if hotkey_listener is not None:
+            hotkey_listener.stop()
         status_indicator.stop()
         server.server_close()
 

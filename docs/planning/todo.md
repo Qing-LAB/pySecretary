@@ -110,6 +110,13 @@ Status keys:
 - `[x]` Add Playwright UI validation (`tests/test_ui_playwright.py`, opt-in via `scripts/run-tests.sh --ui`); dev deps in `requirements-dev.txt`.
 - `[ ]` Expand Playwright coverage: controls, sensitivity panel, error/empty states, command routing.
 
+## Output Bridge (send spoken text to other programs)
+
+- `[x]` Add `TranscriptSink` + stdout/clipboard/keystroke sinks (pynput/pyperclip lazy, optional `requirements-output.txt`).
+- `[x]` Push-to-send `SendTranscript` command: deliver only the unsent remainder; UI Send button + global hotkey (`output_hotkey`).
+- `[ ]` Named-pipe (FIFO) and templated shell-command sinks.
+- `[ ]` Optional continuous (auto-send on settle) mode.
+
 ## Milestone 6: Structured Task Detection And Routing
 
 - `[ ]` Define task JSON schema.

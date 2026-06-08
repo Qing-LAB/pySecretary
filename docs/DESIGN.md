@@ -118,6 +118,8 @@ covered by `tests/test_config.py`):
 - Persistence: `PSEC_TRANSCRIPT_PATH` (spoken/conversation transcript),
   `PSEC_THOUGHT_LOG_PATH` (separate thought-trace log), `PSEC_PROTOTYPE_LOG_PATH`
   (durable full-text transcript log across contexts), `PSEC_OUTPUT_WAV_PATH`.
+- Output bridge: `PSEC_OUTPUT_SINK` (`stdout`/`clipboard`/`keystroke`),
+  `PSEC_OUTPUT_CLIPBOARD_AUTOPASTE`, `PSEC_OUTPUT_HOTKEY` (global push-to-send hotkey).
 - UI/runtime: `PSEC_PROTOTYPE_HOST`, `PSEC_PROTOTYPE_PORT`, `PSEC_REQUEST_TIMEOUT`,
   `PSEC_DISCOVERY_TIMEOUT`, `PSEC_DEBUG`.
 
@@ -225,6 +227,13 @@ thought-only speech) and the non-speech STT filter. Detailed contract:
 described in the Design Rules is realized in `pysecretary.prototype` and the future App
 State Machine milestone, not in this loop.
 
+### `pysecretary.output_bridge`
+
+Sends finalized spoken text to another program (stdout/pipe, clipboard, or keystroke
+injection) via a `TranscriptSink`, on a push-to-send `SendTranscript` command (UI button or
+global hotkey). Optional `pynput`/`pyperclip` deps are lazy-imported. Detailed contract:
+[`docs/modules/output_bridge.md`](modules/output_bridge.md).
+
 ### `pysecretary.console`
 
 Owns the in-place one-line CLI status indicator. Subscribes to controller events; owns
@@ -278,6 +287,7 @@ module docs.
 | `PrototypeState` | `events` | Reduced UI-facing snapshot (`smoothed_text` = full transcript; settled head + re-editable hot tail; `context_summary` = compact context memory) |
 | `QueuedAudioTurn` / `QueuedRawTranscript` | `prototype` | Queue items with ids/sequence/timing |
 | `LLMRequest` | `llm_queue` | A coalescible LLM work item (context_key, sequence, payload) |
+| `TranscriptSink` | `output_bridge` | Delivers finalized text to another program (stdout/clipboard/keystroke) |
 | `TranscriptSection` | `transcript` | Raw STT section with provenance for merge |
 | `TranscriptMergeResult` | `transcript` | Updated transcript + feedback + thoughts + context |
 | `ThoughtSplit` | `transcript` | Final-safe text vs. extracted thoughts |

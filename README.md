@@ -106,6 +106,7 @@ scripts/run-tests.sh --ui      # + browser UI validation
 - `pysecretary/events.py`: UI-facing event, command, and prototype state contracts
 - `pysecretary/transcript.py`: transcript merge parsing and thought separation helpers
 - `pysecretary/llm_queue.py`: coalescing LLM request queue (combines related requests; separates clients)
+- `pysecretary/output_bridge.py`: send finalized text to other programs (stdout/clipboard/keystroke; push-to-send)
 - `pysecretary/context_budget.py`: prompt context-window budgeting for transcript merge
 - `pysecretary/console.py`: in-place one-line CLI status indicator
 - `pysecretary/koboldcpp.py`: discovers KoboldCPP capabilities and exposes shared API calls
@@ -125,6 +126,7 @@ scripts/run-tests.sh --ui      # + browser UI validation
 - `docs/modules/llm_queue.md`: coalescing LLM request queue contract
 - `docs/modules/context_budget.md`: prompt context-window budgeting contract
 - `docs/modules/console.md`: CLI status indicator contract
+- `docs/modules/output_bridge.md`: send finalized text to other programs (stdout/clipboard/keystroke)
 - `docs/modules/ui.md`: lightweight UI dashboard, streaming feedback, and concurrency design
 - `docs/planning/`: active roadmap, TODO list, and archive policy
 - `docs/testing/strategy.md`: layered testing strategy
@@ -132,6 +134,7 @@ scripts/run-tests.sh --ui      # + browser UI validation
 - `tests/`: offline module tests, API contract tests, and an opt-in Playwright UI test
 - `requirements.txt`: runtime Python dependencies
 - `requirements-dev.txt`: dev/test-only dependencies (Playwright)
+- `requirements-output.txt`: optional output-bridge deps (pynput/pyperclip) for keystroke/clipboard sinks
 
 ## Troubleshooting
 
