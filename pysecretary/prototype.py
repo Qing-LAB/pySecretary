@@ -21,6 +21,7 @@ from .stt import (
     dedup_overlap,
     is_non_content_transcript,
     is_non_speech_transcript,
+    trim_repeated_prefix,
 )
 from .transcript import LLMTranscriptMerger, TranscriptMergeResult, TranscriptMerger, TranscriptSection
 from .utils import timestamp
@@ -419,8 +420,10 @@ class PrototypeController:
             context_action = "continue"
         elif result.context_action in ("renew", "paragraph") and current.strip():
             # Settle the whole current transcript and start a new paragraph from the new
-            # sections. (renew also renews the context summary in the reducer.)
-            full_text = f"{current.rstrip()}\n\n{region}"
+            # sections. The model sometimes (wrongly) re-emits the editable tail when it opens
+            # a paragraph; trim that repeated lead so the prior text is not duplicated.
+            appended = trim_repeated_prefix(editable_tail, region).strip() if editable_tail.strip() else region
+            full_text = f"{current.rstrip()}\n\n{appended}" if appended else current
             context_summary = result.context_summary
             context_action = result.context_action
         else:

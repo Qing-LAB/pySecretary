@@ -574,6 +574,31 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertIn("hello there friend", text)
         self.assertNotIn("there there", text)
 
+    def test_paragraph_does_not_duplicate_repeated_tail(self) -> None:
+        # The model opens a paragraph but re-emits part of the previous text; the repeated
+        # lead must be trimmed so the transcript is not duplicated.
+        merger = ContextMerger(
+            [
+                TranscriptMergeResult(smoothed_text="alpha beta gamma delta.", context_action="continue"),
+                TranscriptMergeResult(smoothed_text="beta gamma delta epsilon zeta", context_action="paragraph"),
+            ]
+        )
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["alpha beta gamma delta", "more words here"]),  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        text = str(controller.snapshot()["smoothed_text"])
+        self.assertIn("alpha beta gamma delta", text)
+        self.assertIn("epsilon zeta", text)
+        self.assertEqual(text.count("beta gamma delta"), 1)  # not duplicated
+
     def test_drain_pending_as_raw_preserves_queued_text(self) -> None:
         from pysecretary.llm_queue import LLMRequest
         from pysecretary.prototype import QueuedRawTranscript

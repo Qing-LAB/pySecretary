@@ -74,7 +74,10 @@ The prototype uses amplitude-based VAD first:
   each section's leading words that duplicate the end of the running transcript
   (`dedup_overlap`, word-level, case/punctuation-insensitive) before merge, so the overlapped
   audio is not transcribed twice (e.g. "...to the" + "to the meeting" → "...to the meeting").
-  A section that is entirely duplicate is dropped.
+  A section that is entirely duplicate is dropped. When the model opens a new paragraph but
+  re-emits part of the editable tail, the repeated lead is also trimmed
+  (`trim_repeated_prefix`) before the paragraph is appended, so a mid-sentence restart cannot
+  duplicate the prior text.
 
 Configurable fields:
 

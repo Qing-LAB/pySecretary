@@ -224,6 +224,46 @@ def _dedup_norm(token: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", token.lower())
 
 
+def trim_repeated_prefix(reference: str, text: str, min_match_words: int = 3) -> str:
+    """Trim a leading run of ``text`` that duplicates any contiguous run inside ``reference``.
+
+    Unlike :func:`dedup_overlap` (which only matches a suffix of the previous text), this
+    catches a section that *restarts* from the middle of the reference — e.g. the model
+    re-emits part of the editable tail when it (wrongly) opens a new paragraph. Only a match
+    of at least ``min_match_words`` words is trimmed, to avoid removing incidental repeats.
+    """
+    ref_norm = [token for token in (_dedup_norm(t) for t in re.findall(r"\S+", reference)) if token]
+    text_tokens = re.findall(r"\S+", text)
+    text_norm = [_dedup_norm(token) for token in text_tokens]
+    non_empty = [token for token in text_norm if token]
+    if len(ref_norm) < min_match_words or len(non_empty) < min_match_words:
+        return text
+
+    max_k = min(len(ref_norm), len(non_empty))
+    for k in range(max_k, min_match_words - 1, -1):
+        prefix = non_empty[:k]
+        if _contains_run(ref_norm, prefix):
+            kept = 0
+            seen = 0
+            for index, token in enumerate(text_norm):
+                if token:
+                    seen += 1
+                if seen >= k:
+                    kept = index + 1
+                    break
+            return " ".join(text_tokens[kept:]).lstrip()
+    return text
+
+
+def _contains_run(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    for start in range(len(haystack) - len(needle) + 1):
+        if haystack[start : start + len(needle)] == needle:
+            return True
+    return False
+
+
 def clean_transcript_artifacts(text: str) -> str:
     """Strip embedded non-speech sound cues from STT output.
 

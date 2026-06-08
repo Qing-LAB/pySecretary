@@ -9,6 +9,7 @@ from pysecretary.stt import (
     dedup_overlap,
     is_non_content_transcript,
     is_non_speech_transcript,
+    trim_repeated_prefix,
 )
 from tests.audio_stubs import install_audio_dependency_stubs
 
@@ -121,6 +122,16 @@ class ModuleWrapperTests(unittest.TestCase):
         self.assertEqual(dedup_overlap("that's the end of the", "that's the end of the test"), "test")
         self.assertEqual(dedup_overlap("hello world", "brand new words"), "brand new words")
         self.assertEqual(dedup_overlap("", "anything goes"), "anything goes")
+
+    def test_trim_repeated_prefix_removes_mid_reference_restart(self) -> None:
+        # A new paragraph that restarts from the middle of the editable tail is trimmed.
+        reference = "I am going to talk for a while moving from the budget"
+        text = "talk for a while moving from the budget to the next item"
+        self.assertEqual(trim_repeated_prefix(reference, text), "to the next item")
+        # No substantial overlap -> unchanged.
+        self.assertEqual(trim_repeated_prefix("alpha beta gamma", "delta epsilon zeta"), "delta epsilon zeta")
+        # Short (< min_match) incidental repeats are left alone.
+        self.assertEqual(trim_repeated_prefix("the meeting", "the agenda is set"), "the agenda is set")
 
     def test_clean_transcript_artifacts_preserves_real_parentheticals(self) -> None:
         self.assertEqual(
