@@ -89,6 +89,29 @@ The pySecretary-compatible launch uses:
 - Context size `16384`
 - Flash attention and smart context enabled
 
+### Model sources
+
+These are where the example models come from. Filenames are the local copies; download the
+GGUF/GGML files and point the launch flags at them.
+
+| Role | Example file | Source |
+| --- | --- | --- |
+| LLM | `Qwen_Qwen3.5-9B-Q4_K_M.gguf` | Qwen GGUF builds on Hugging Face, e.g. [`unsloth/Qwen3.5-9B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) (pick the `Q4_K_M` file); official Qwen GGUF repos live under the [Qwen org](https://huggingface.co/Qwen). |
+| STT (Whisper) | `whisper-small-q5_1.bin` | Official whisper.cpp GGML models: [`ggerganov/whisper.cpp`](https://huggingface.co/ggerganov/whisper.cpp/tree/main) (list + sizes in the [whisper.cpp models README](https://github.com/ggml-org/whisper.cpp/tree/main/models)). |
+| TTS | `Kokoro_no_espeak_Q4.gguf` | Official KoboldCpp TTS repo: [`koboldcpp/tts`](https://huggingface.co/koboldcpp/tts) (alt: [`mmwillet2/Kokoro_GGUF`](https://huggingface.co/mmwillet2/Kokoro_GGUF)). |
+
+### Whisper accuracy and VRAM
+
+In KoboldCpp, Whisper has **no GPU offload** — it runs on CPU (only the LLM via `--gpulayers`
+and TTS via `--ttsgpu` use the GPU). So a larger, more accurate Whisper model costs RAM/CPU,
+not VRAM, and will not compete with the LLM on the GPU.
+
+For much better word accuracy than `whisper-small` at low CPU cost, prefer
+[`ggml-large-v3-turbo-q5_0.bin`](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin)
+(~547 MiB — near `large-v3` accuracy, much faster on CPU). `medium-q5_0` is a smaller step up;
+`large-v3-q5_0` (~1.1 GiB) is the most accurate but slower on CPU. Swap by changing only the
+`--whispermodel` flag.
+
 Current script:
 
 ```bash
