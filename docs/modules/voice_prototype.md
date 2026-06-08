@@ -67,10 +67,14 @@ The prototype uses amplitude-based VAD first:
   the most recent short pause (a silence run >= `partial_overlap_min_gap_seconds`, default
   0.3s, found within the last `partial_overlap_max_seconds`), so the overlap begins at a
   natural boundary instead of mid-word. If no nearby pause exists, it falls back to a fixed
-  `partial_overlap_seconds` trailing overlap. The overlapping audio lets the merge stitch and
-  dedup the boundary words. So a segment is sent when **a gap exceeds `silence_gap_seconds`
-  (turn end) or the turn reaches `partial_turn_seconds`**, and the next segment seeds from the
-  last short gap.
+  `partial_overlap_seconds` trailing overlap. So a segment is sent when **a gap exceeds
+  `silence_gap_seconds` (turn end) or the turn reaches `partial_turn_seconds`**, and the next
+  segment seeds from the last short gap.
+- **Overlap dedup**: because the overlap deliberately re-sends words, the controller trims
+  each section's leading words that duplicate the end of the running transcript
+  (`dedup_overlap`, word-level, case/punctuation-insensitive) before merge, so the overlapped
+  audio is not transcribed twice (e.g. "...to the" + "to the meeting" → "...to the meeting").
+  A section that is entirely duplicate is dropped.
 
 Configurable fields:
 

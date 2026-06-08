@@ -46,6 +46,11 @@ ARTIFACT_WORDS = {
     "crackle",
     "creak",
     "crowd",
+    "distant",
+    "faint",
+    "gentle",
+    "loud",
+    "soft",
     "door",
     "drum",
     "engine",
@@ -182,6 +187,41 @@ _CUE_SEGMENT_PATTERNS = (
     re.compile(r"♪+"),
     re.compile(r"♫+"),
 )
+
+
+def dedup_overlap(previous_text: str, next_text: str, max_overlap_words: int = 15) -> str:
+    """Trim a leading run of words from ``next_text`` that duplicates the end of
+    ``previous_text``.
+
+    Consecutive STT sections share a few words because audio is captured with overlap, so
+    the start of one section repeats the end of the previous (e.g. "...to the" + "to the
+    meeting..."). This removes that duplicated prefix at the word level (case- and
+    punctuation-insensitive), keeping the original text of the words that are kept.
+    """
+    next_tokens = re.findall(r"\S+", next_text)
+    prev_norm = [_dedup_norm(token) for token in re.findall(r"\S+", previous_text)]
+    prev_norm = [token for token in prev_norm if token]
+    next_norm = [_dedup_norm(token) for token in next_tokens]
+
+    max_k = min(max_overlap_words, len(prev_norm), len(next_norm))
+    for k in range(max_k, 0, -1):
+        # Compare against the non-empty normalized prefix of next, but trim the original
+        # tokens by the same count.
+        if prev_norm[-k:] == [t for t in next_norm if t][:k]:
+            kept = 0
+            seen = 0
+            for index, token in enumerate(next_norm):
+                if token:
+                    seen += 1
+                if seen >= k:
+                    kept = index + 1
+                    break
+            return " ".join(next_tokens[kept:]).lstrip()
+    return next_text
+
+
+def _dedup_norm(token: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", token.lower())
 
 
 def clean_transcript_artifacts(text: str) -> str:

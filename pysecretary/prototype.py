@@ -4,7 +4,7 @@ import queue
 import re
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import monotonic as time_monotonic, sleep, time as time_wall
 from typing import Callable, Iterator, Protocol
 
@@ -18,6 +18,7 @@ from .llm_queue import LLMRequest, LLMRequestQueue
 from .stt import (
     SpeechToTextClient,
     clean_transcript_artifacts,
+    dedup_overlap,
     is_non_content_transcript,
     is_non_speech_transcript,
 )
@@ -353,18 +354,36 @@ class PrototypeController:
             self._set_stt_active(False)
 
     def _process_merge(self, raw_transcripts: list[QueuedRawTranscript]) -> None:
-        sections = [self._to_transcript_section(raw_transcript) for raw_transcript in raw_transcripts]
-        turn_ids = [section.turn_id for section in sections]
+        turn_ids = [raw_transcript.turn_id for raw_transcript in raw_transcripts]
         turn_id = turn_ids[-1]
         self._emit(
             "TranscriptMergeStarted",
             turn_id=turn_id,
             turn_ids=turn_ids,
-            section_count=len(sections),
+            section_count=len(raw_transcripts),
         )
         snap = self.snapshot()
         current = str(snap.get("smoothed_text", ""))
         current_context_summary = str(snap.get("context_summary", ""))
+
+        # Trim overlap-duplicated leading words from each section against the running text,
+        # so the deliberately-overlapped audio is not transcribed twice into the transcript.
+        deduped: list[QueuedRawTranscript] = []
+        running = current
+        for raw_transcript in raw_transcripts:
+            text = dedup_overlap(running, raw_transcript.text).strip()
+            if not text:
+                continue
+            deduped.append(replace(raw_transcript, text=text))
+            running = f"{running} {text}".strip()
+
+        if not deduped:
+            # Everything was overlap duplicate; nothing new to add.
+            self._emit("TranscriptMergeCompleted", turn_id=turn_id, turn_ids=turn_ids, section_count=0)
+            return
+
+        sections = [self._to_transcript_section(raw_transcript) for raw_transcript in deduped]
+
         # Only the recent "hot" tail is re-editable; everything older is settled and frozen
         # by the program so it can never be lost. The model sees the hot tail (which may end
         # mid-sentence) and decides how the new speech relates to it.
@@ -380,7 +399,7 @@ class PrototypeController:
             current_context_summary=current_context_summary,
         )
 
-        raw_new = " ".join(section.text for section in raw_transcripts).strip()
+        raw_new = " ".join(raw_transcript.text for raw_transcript in deduped).strip()
         region = result.smoothed_text.strip()
         stopping = self._stop_event.is_set()
 

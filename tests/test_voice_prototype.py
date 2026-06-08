@@ -558,6 +558,22 @@ class VoicePrototypeTests(unittest.TestCase):
 
         self.assertIn("hello there world", controller.snapshot()["smoothed_text"])
 
+    def test_overlap_is_deduped_across_sections(self) -> None:
+        # The second section repeats the first's tail (overlap audio). The duplicate must be
+        # trimmed so the transcript does not contain "there there".
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w1"), make_turn(b"w2")]),
+            stt=FakeStt(["hello there", "there friend"]),  # type: ignore[arg-type]
+            merger=EmptyMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        text = controller.snapshot()["smoothed_text"]
+        self.assertIn("hello there friend", text)
+        self.assertNotIn("there there", text)
+
     def test_drain_pending_as_raw_preserves_queued_text(self) -> None:
         from pysecretary.llm_queue import LLMRequest
         from pysecretary.prototype import QueuedRawTranscript

@@ -6,6 +6,7 @@ from pysecretary.llm import LLMClient
 from pysecretary.stt import (
     SpeechToTextClient,
     clean_transcript_artifacts,
+    dedup_overlap,
     is_non_content_transcript,
     is_non_speech_transcript,
 )
@@ -113,6 +114,13 @@ class ModuleWrapperTests(unittest.TestCase):
         self.assertEqual(clean_transcript_artifacts("(coughing)"), "")
         self.assertEqual(clean_transcript_artifacts("♪ music ♪"), "")
         self.assertEqual(clean_transcript_artifacts("[BLANK_AUDIO]"), "")
+
+    def test_dedup_overlap_trims_repeated_prefix(self) -> None:
+        self.assertEqual(dedup_overlap("budget of forty two to the", "to the meeting tomorrow"), "meeting tomorrow")
+        self.assertEqual(dedup_overlap("Good morning.", "Good morning. This is a test."), "This is a test.")
+        self.assertEqual(dedup_overlap("that's the end of the", "that's the end of the test"), "test")
+        self.assertEqual(dedup_overlap("hello world", "brand new words"), "brand new words")
+        self.assertEqual(dedup_overlap("", "anything goes"), "anything goes")
 
     def test_clean_transcript_artifacts_preserves_real_parentheticals(self) -> None:
         self.assertEqual(
