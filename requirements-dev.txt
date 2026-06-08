@@ -1,0 +1,4 @@
+# Development / test-only dependencies (not needed to run the assistant).
+# Installed and managed by uv via scripts/run-tests.sh --ui.
+# After installing, fetch the browser once: python -m playwright install chromium
+playwright

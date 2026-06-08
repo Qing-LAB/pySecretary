@@ -18,6 +18,15 @@ drift between contributors and the prototype launcher:
 scripts/run-tests.sh
 ```
 
+Browser UI validation (opt-in). This installs the dev dependencies from
+`requirements-dev.txt` (Playwright) and the Chromium browser via `uv`, then runs the
+Playwright dashboard test. It is excluded from the default suite, which self-skips it
+unless `PSEC_UI_TESTS=1` and a browser are present:
+
+```bash
+scripts/run-tests.sh --ui
+```
+
 Compile sanity check:
 
 ```bash
@@ -56,6 +65,7 @@ Current examples:
 - `tests/test_events.py`
 - `tests/test_transcript_merge.py` thought-split and parse tests
 - `tests/test_context_budget.py`
+- `tests/test_llm_queue.py` coalescing/dispatch contract
 - `tests/test_console.py` status formatter tests
 - `tests/test_utils.py`
 - future `tests/test_storage.py`
@@ -117,12 +127,15 @@ Current examples:
 - `tests/test_events.py` reducer state transitions and thought/feedback separation
 - `tests/test_app.py` simple-loop end-to-end thought safety and task path
 
+- `tests/test_ui_playwright.py` browser validation that the transcript renders, grows in
+  real time, and shows the full accumulated text (opt-in; see `scripts/run-tests.sh --ui`)
+
 Future examples:
 
 - `tests/test_controller.py`
 - `tests/test_ui_state.py`
 - `tests/test_pipeline.py`
-- future Playwright tests using fake backend events
+- broader Playwright coverage (controls, sensitivity panel, error/empty states)
 
 ## Layer 4: Live Local Integration Checks
 

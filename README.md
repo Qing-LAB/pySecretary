@@ -85,6 +85,14 @@ Run the offline regression suite:
 python -m unittest discover -s tests
 ```
 
+Or use the managed runner (creates/syncs the `uv` environment, then runs tests + a compile
+check). Add `--ui` to also install Playwright + a browser and run the dashboard UI test:
+
+```bash
+scripts/run-tests.sh           # offline suite
+scripts/run-tests.sh --ui      # + browser UI validation
+```
+
 ## Notes
 
 - The assistant tries to avoid converting the LLM's internal thought process into speech. It only speaks the final organized output or task results.
@@ -97,6 +105,7 @@ python -m unittest discover -s tests
 - `pysecretary/prototype.py`: event-driven automatic voice smoothing prototype controller
 - `pysecretary/events.py`: UI-facing event, command, and prototype state contracts
 - `pysecretary/transcript.py`: transcript merge parsing and thought separation helpers
+- `pysecretary/llm_queue.py`: coalescing LLM request queue (combines related requests; separates clients)
 - `pysecretary/context_budget.py`: prompt context-window budgeting for transcript merge
 - `pysecretary/console.py`: in-place one-line CLI status indicator
 - `pysecretary/koboldcpp.py`: discovers KoboldCPP capabilities and exposes shared API calls
@@ -113,14 +122,16 @@ python -m unittest discover -s tests
 - `docs/modules/voice_prototype.md`: automatic voice smoothing prototype contract
 - `docs/modules/events.md`: event/command/state data contracts and reducer
 - `docs/modules/transcript.md`: thought separation and transcript merge contract
+- `docs/modules/llm_queue.md`: coalescing LLM request queue contract
 - `docs/modules/context_budget.md`: prompt context-window budgeting contract
 - `docs/modules/console.md`: CLI status indicator contract
 - `docs/modules/ui.md`: lightweight UI dashboard, streaming feedback, and concurrency design
 - `docs/planning/`: active roadmap, TODO list, and archive policy
 - `docs/testing/strategy.md`: layered testing strategy
 - `scripts/run-tests.sh`: managed test runner; `scripts/run-prototype-ui.sh`: prototype launcher
-- `tests/`: offline module tests and API contract tests
-- `requirements.txt`: Python dependencies
+- `tests/`: offline module tests, API contract tests, and an opt-in Playwright UI test
+- `requirements.txt`: runtime Python dependencies
+- `requirements-dev.txt`: dev/test-only dependencies (Playwright)
 
 ## Troubleshooting
 

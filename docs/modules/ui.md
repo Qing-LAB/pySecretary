@@ -136,13 +136,14 @@ Recommended first dashboard:
   - displays evolving user text.
   - supports segment statuses: `recording`, `transcribing`, `tentative`, `revised`, `final`.
   - allows later updates to replace or merge earlier text.
-  - streaming feedback: the newly changed tail of the active context is briefly highlighted
-    as it updates, with a blinking cursor while capture is running, so the user can track
-    live progress.
-  - color coding: settled history (sealed previous contexts, `committed_text`) renders in a
-    muted color; the active context (`smoothed_text`) renders in an accent color. A
-    scrollable full-transcript view shows `committed_text` + `smoothed_text` together. See
-    [`voice_prototype.md`](voice_prototype.md) Persistent Full Transcript for the data model.
+  - streaming feedback: the transcript is one large, auto-scrolling panel; the newly
+    appended tail is briefly highlighted as it updates, with a blinking cursor while capture
+    is running, so the user can track live progress.
+  - the full transcript (`smoothed_text`) is always visible; the settled part only grows and
+    the recent hot tail may re-flow as it is refined;
+    diagnostics and settings live in a collapsed "Details" section so the main view stays
+    focused on the text. See [`voice_prototype.md`](voice_prototype.md) Persistent Full
+    Transcript for the data model.
 
 - Chat/final output panel:
   - user finalized turns.

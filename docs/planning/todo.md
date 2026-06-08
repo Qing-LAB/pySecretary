@@ -74,6 +74,7 @@ Status keys:
 - `[x]` Add Layer 3 tests proving capture can enqueue while STT/LLM are busy.
 - `[x]` Prioritize STT over LLM cleanup when both share the same local KoboldCPP server.
 - `[x]` Batch accumulated raw transcript sections after each LLM cleanup call returns.
+- `[x]` Add a coalescing LLM request queue (`pysecretary.llm_queue`) keyed by context: combine related pending requests into one call; keep unrelated clients/streams independent. Wire the merge stage onto it.
 - `[x]` Persist full transcript across context switches (committed history + `prototype_transcript.log`).
 - `[x]` Keep main panel focused on current context while sealing prior contexts on renew.
 - `[ ]` Define app event and command types.
@@ -102,7 +103,12 @@ Status keys:
 - `[ ]` Add working transcript panel with segment replacement.
 - `[ ]` Add final response/chat panel.
 - `[ ]` Add hidden debug/thought panel.
-- `[ ]` Add Playwright tests after reducer and protocol tests.
+- `[x]` Simplify dashboard to one large auto-scrolling transcript; tuck diagnostics/settings into a collapsed Details section.
+- `[x]` Accumulate the full transcript so the whole text is always visible and grows in real time.
+- `[x]` Re-editable hot tail (tunable `merge_lookback_sentences`/`merge_lookback_words`): the model may revise the last sentence to fix split-sentence seams; older text is settled/frozen.
+- `[x]` Three-way context action (continue / paragraph / renew) so the secretary decides what is settled vs hot, with a compact `context_summary` kept separate from the detailed text.
+- `[x]` Add Playwright UI validation (`tests/test_ui_playwright.py`, opt-in via `scripts/run-tests.sh --ui`); dev deps in `requirements-dev.txt`.
+- `[ ]` Expand Playwright coverage: controls, sensitivity panel, error/empty states, command routing.
 
 ## Milestone 6: Structured Task Detection And Routing
 

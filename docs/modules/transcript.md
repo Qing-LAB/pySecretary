@@ -9,9 +9,9 @@ JSON parsing rules change.
 1. **Thought separation** — split `<think>...</think>` reasoning from user-facing text.
 2. **Transcript merging** — turn raw STT sections plus prior state into secretary-grade
    cleaned text (grammar/sentence repair, not verbatim transcription), delegating the
-   actual LLM call to [`llm.py`](../DESIGN.md) and context budgeting to
-   [`context_budget.md`](context_budget.md). Cross-context persistence (sealing previous
-   contexts) is owned by the controller, not the merger — see
+   actual LLM call to [`llm.py`](../DESIGN.md). The controller chooses the editable hot tail
+   (via [`context_budget.md`](context_budget.md) `split_recent_tail`) and splices the model's
+   region back onto the frozen head — see
    [`voice_prototype.md`](voice_prototype.md) Persistent Full Transcript.
 
 ## Data Contracts
@@ -34,11 +34,11 @@ can order, stitch, and self-correct. Fields: `turn_id`, `sequence`, `text`,
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `smoothed_text` | `str` | Full updated cleaned transcript (not a diff) |
+| `smoothed_text` | `str` | The model's region: on `continue` the corrected hot tail + new sections; on `paragraph`/`renew` only the cleaned new sections |
 | `feedback` | `list[str]` | Cleanup notes (UI feedback panel) |
 | `thoughts` | `list[str]` | Captured reasoning (debug panel only) |
 | `context_summary` | `str` | Compact carry-over for the next merge |
-| `context_action` | `str` | `continue` or `renew` |
+| `context_action` | `str` | `continue`, `paragraph`, or `renew` |
 
 ### `TranscriptMerger` (Protocol)
 
@@ -78,8 +78,8 @@ before TTS and by merge-response parsing.
 4. On no JSON: fall back to treating `final_text` as `smoothed_text` (plain-text
    tolerance, as required by the prototype contract).
 
-`context_action` normalizes `renew|new|new_conversation|reset` → `renew`, else
-`continue`.
+`context_action` normalizes `renew|new|new_conversation|reset|new_topic` → `renew`,
+`paragraph|new_paragraph|new_para|newline|break` → `paragraph`, else `continue`.
 
 ## `LLMTranscriptMerger` Flow
 
@@ -87,39 +87,34 @@ before TTS and by merge-response parsing.
 sequenceDiagram
     participant C as Controller
     participant M as LLMTranscriptMerger
-    participant B as context_budget.prepare_merge_context
     participant LLM as LLMClient.merge_transcript_context
     participant P as parse_merge_response
 
-    C->>M: merge(existing, sections, recent, summary)
+    Note over C: split_recent_tail -> settled head (frozen) + hot tail (editable)
+    C->>M: merge(editable_tail, new_sections, recent, summary)
     M->>M: format_transcript_sections_for_prompt(sections) -> JSON
-    M->>B: budget inputs against detected/config context limit
-    B-->>M: PreparedMergeContext (latest sections preserved verbatim)
-    M->>LLM: merge_transcript_context(prepared..., prior_was_reduced)
-    LLM-->>M: response_text
+    M->>LLM: merge_transcript_context(editable_tail, new_raw, ...)
+    LLM-->>M: response_text (+ context_action)
     M->>P: parse_merge_response(response_text)
-    P-->>M: TranscriptMergeResult
-    alt empty smoothed_text
-        M-->>C: keep previous transcript + feedback note
-    else context guard reduced older text
-        M->>M: combine_stable_prefix(prefix, cleaned_tail)
-        M-->>C: result with restored prefix + guard note
-    end
+    P-->>M: TranscriptMergeResult (region + context_action + context_summary)
+    M-->>C: region + context_action
+    Note over C: continue -> head + region; paragraph/renew -> current + new paragraph
 ```
 
-The context limit is resolved from the discovered `KoboldCppProfile.context_limit_tokens`
-when available, else `config.llm_context_window_tokens`.
+The controller chooses the small editable tail with `split_recent_tail`; the merger passes
+it through and returns whatever the model produced. The merger does not own or bound the
+full transcript.
 
 ## Invariants
 
-- The merger returns cleaned text for the editable region: on `continue`, the editable
-  tail combined with the new sections; on `renew`, only the cleaned new sections (the
-  controller seals the prior context).
-- If the LLM returns no usable `smoothed_text`, the previous transcript is preserved
-  and a feedback note is added (no data loss).
-- When the context guard moved older cleaned text outside the prompt, that stable
-  prefix is recombined with the model's cleaned tail; the latest raw sections are
-  never summarized away (see [`context_budget.md`](context_budget.md)).
+- The settled head (everything older than the hot tail) is frozen by the controller and is
+  never sent to the model, so it cannot be lost — the transcript never loses settled text.
+- On `continue` the model returns the corrected hot tail merged with the new sections; on
+  `paragraph`/`renew` it returns only the cleaned new sections. The controller splices
+  accordingly (replace tail vs. new paragraph).
+- An empty region leaves the transcript unchanged (no data loss).
+- `context_summary` (compact topic/entities memory) is maintained separately from the
+  detailed text and carried across merges to judge continuity.
 
 ## Tests
 

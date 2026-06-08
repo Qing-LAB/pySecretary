@@ -109,29 +109,23 @@ class TranscriptMergeTests(unittest.TestCase):
         self.assertEqual(llm.calls[0]["context"], "prototype context")
         self.assertEqual(llm.calls[0]["reduced"], "False")
 
-    def test_llm_merger_preserves_original_prefix_when_context_guard_reduces_history(self) -> None:
-        config = SecretaryConfig(
-            llm_context_window_tokens=220,
-            llm_context_response_reserved_tokens=40,
-            llm_context_prompt_overhead_tokens=40,
-            llm_context_safety_tokens=20,
-        )
-        llm = FakeMergeLlm(
-            '{"smoothed_text": "Editable tail. Clean latest sentence.", "feedback": "cleaned latest"}',
-            config=config,
-        )
+    def test_llm_merger_passes_editable_tail_and_returns_region(self) -> None:
+        # The merger passes the controller-chosen editable tail through unchanged and
+        # returns whatever the model produced (the spliced region); the controller decides
+        # how to splice it back. Tail bounding is the controller's job (split_recent_tail).
+        llm = FakeMergeLlm('{"smoothed_text": "Editable tail completed by the new words."}')
         merger = LLMTranscriptMerger(llm)  # type: ignore[arg-type]
-        old_prefix = "Original historical sentence. " * 80
-        section = make_section(text="clean latest sentence")
+        section = make_section(text="completed by the new words")
 
-        result = merger.merge(old_prefix + "Editable tail.", [section], "recent raw", "current context")
+        result = merger.merge("Editable tail", [section], "recent raw", "current context")
 
-        self.assertTrue(result.smoothed_text.startswith("Original historical sentence."))
-        self.assertIn("Clean latest sentence.", result.smoothed_text)
-        self.assertEqual(llm.calls[0]["reduced"], "True")
-        self.assertIn('"raw_text": "clean latest sentence"', llm.calls[0]["new_raw"])
-        self.assertLess(len(llm.calls[0]["existing"]), len(old_prefix))
-        self.assertIn("Context guard preserved", result.feedback[-1])
+        self.assertEqual(result.smoothed_text, "Editable tail completed by the new words.")
+        self.assertEqual(llm.calls[0]["existing"], "Editable tail")
+        self.assertIn('"raw_text": "completed by the new words"', llm.calls[0]["new_raw"])
+
+    def test_parse_merge_response_normalizes_paragraph_action(self) -> None:
+        result = parse_merge_response('{"smoothed_text": "x", "context_action": "new_paragraph"}')
+        self.assertEqual(result.context_action, "paragraph")
 
     def test_format_transcript_sections_for_prompt_serializes_ordered_metadata(self) -> None:
         payload = json.loads(

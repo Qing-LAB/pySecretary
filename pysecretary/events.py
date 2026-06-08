@@ -39,7 +39,6 @@ class PrototypeState:
     discarded_turns: list[dict[str, Any]] = field(default_factory=list)
     discarded_transcriptions: list[dict[str, Any]] = field(default_factory=list)
     smoothed_text: str = ""
-    committed_text: str = ""
     context_summary: str = ""
     context_action: str = "continue"
     feedback: list[dict[str, Any]] = field(default_factory=list)
@@ -62,7 +61,6 @@ class PrototypeState:
             "discarded_turns": list(self.discarded_turns),
             "discarded_transcriptions": list(self.discarded_transcriptions),
             "smoothed_text": self.smoothed_text,
-            "committed_text": self.committed_text,
             "context_summary": self.context_summary,
             "context_action": self.context_action,
             "feedback": list(self.feedback),
@@ -145,8 +143,6 @@ def reduce_prototype_state(state: PrototypeState, event: AssistantEvent) -> Prot
         )
     elif event.type == "SmoothedTranscriptUpdated":
         state.smoothed_text = str(event.payload.get("text", ""))
-        if "committed_text" in event.payload:
-            state.committed_text = str(event.payload.get("committed_text", ""))
         context_summary = str(event.payload.get("context_summary", "")).strip()
         context_action = str(event.payload.get("context_action", state.context_action))
         if context_summary or context_action == "renew":
@@ -183,7 +179,6 @@ def reduce_prototype_state(state: PrototypeState, event: AssistantEvent) -> Prot
         state.discarded_turns.clear()
         state.discarded_transcriptions.clear()
         state.smoothed_text = ""
-        state.committed_text = ""
         state.context_summary = ""
         state.context_action = "continue"
         state.feedback.clear()

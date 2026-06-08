@@ -44,9 +44,8 @@ copy used by both the HTTP `/api/state` snapshot and the SSE initial frame. Key 
 | `raw_transcripts` | `list[dict]` | Accepted STT sections (append + id) |
 | `discarded_turns` | `list[dict]` | Turns dropped before STT |
 | `discarded_transcriptions` | `list[dict]` | STT output dropped as non-speech |
-| `smoothed_text` | `str` | Cleaned text for the **current context** (main panel) |
-| `committed_text` | `str` | Sealed history of previous contexts; full text = `committed_text` + `smoothed_text` |
-| `context_summary` / `context_action` | `str` | Merge context carry-over |
+| `smoothed_text` | `str` | The single full cleaned transcript; settled head is frozen, only the recent hot tail is re-editable |
+| `context_summary` / `context_action` | `str` | Merge context carry-over; `context_action` drives paragraph breaks |
 | `feedback` / `thoughts` | `list[dict]` | Merge notes vs. captured reasoning (kept apart) |
 | `errors` | `list[dict]` | `{stage, message, timestamp}` |
 | `events` | `list[dict]` | Rolling tail (last 200) for diagnostics |
@@ -80,12 +79,12 @@ rules. Invariants enforced by the reducer and pinned by tests:
 
 - `ThoughtCaptured` text lands in `thoughts`, never in `smoothed_text` or `feedback`.
 - `MergeFeedbackReceived` lands in `feedback`, separate from `thoughts`.
-- `SmoothedTranscriptUpdated` replaces `smoothed_text` (current context) wholesale, and
-  replaces `committed_text` when the payload carries it; it updates `context_summary` when
-  a summary is present or when `context_action == "renew"` (so a renew can clear it). The
-  controller, not the reducer, decides when the prior context is sealed into
-  `committed_text` (see [`voice_prototype.md`](voice_prototype.md) Persistent Full
-  Transcript).
+- `SmoothedTranscriptUpdated` carries the full accumulated transcript in `text` and the
+  reducer stores it in `smoothed_text`; it updates `context_summary` when a summary is
+  present or when `context_action == "renew"` (so `paragraph`/`continue` keep the topic
+  summary, `renew` replaces/clears it). `context_action` is one of `continue`, `paragraph`,
+  or `renew`. The controller (not the reducer) does the hot-tail splice / accumulation (see
+  [`voice_prototype.md`](voice_prototype.md) Persistent Full Transcript).
 - `AssistantError` sets `status="error"` and `running=False`.
 - `PrototypeTranscriptCleared` resets all transcript/feedback/thought/queue fields.
 

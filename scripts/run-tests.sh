@@ -6,7 +6,8 @@
 # server. See docs/testing/strategy.md for the test layers this covers.
 #
 # Usage:
-#   scripts/run-tests.sh                 # full suite + compile sanity check
+#   scripts/run-tests.sh                 # full offline suite + compile sanity check
+#   scripts/run-tests.sh --ui            # also install Playwright + browser and run UI tests
 #   scripts/run-tests.sh -k pattern      # forward args to unittest (e.g. filters)
 #   scripts/run-tests.sh tests.test_app  # run a single module
 #   PSEC_SKIP_COMPILEALL=1 scripts/run-tests.sh
@@ -16,6 +17,19 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${PSEC_VENV_DIR:-"$BASE_DIR/.venv"}"
 PYTHON_BIN="${PYTHON:-python3}"
 REQUIREMENTS_FILE="$BASE_DIR/requirements.txt"
+DEV_REQUIREMENTS_FILE="$BASE_DIR/requirements-dev.txt"
+
+# Pull a leading/!anywhere --ui flag out of the unittest args.
+WANT_UI=0
+PASSTHRU_ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--ui" ]]; then
+    WANT_UI=1
+  else
+    PASSTHRU_ARGS+=("$arg")
+  fi
+done
+set -- ${PASSTHRU_ARGS[@]+"${PASSTHRU_ARGS[@]}"}
 
 echo "pySecretary test runner"
 echo "Project: $BASE_DIR"
@@ -56,9 +70,23 @@ else
   echo "Dependencies are up to date for this virtual environment using $INSTALLER."
 fi
 
+if [[ "$WANT_UI" == "1" ]]; then
+  if [[ -f "$DEV_REQUIREMENTS_FILE" ]]; then
+    echo "Installing dev/test dependencies ($INSTALLER)..."
+    if [[ "$INSTALLER" == "uv" ]]; then
+      uv pip install --python "$VENV_DIR/bin/python" -r "$DEV_REQUIREMENTS_FILE"
+    else
+      python -m pip install -r "$DEV_REQUIREMENTS_FILE"
+    fi
+  fi
+  echo "Ensuring the Playwright browser (chromium) is installed..."
+  python -m playwright install chromium || echo "playwright install failed; UI tests will skip."
+  export PSEC_UI_TESTS=1
+fi
+
 cd "$BASE_DIR"
 
-echo "Running offline unittest suite..."
+echo "Running unittest suite..."
 if (($# > 0)); then
   python -m unittest "$@"
 else

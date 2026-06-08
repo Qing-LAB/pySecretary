@@ -6,6 +6,28 @@ This is the active milestone plan. Keep it current as work lands. Completed or s
 
 Build a local voice secretary that continuously listens through a microphone, transcribes completed speech turns through local KoboldCPP Whisper, organizes and routes requests through local KoboldCPP LLM, speaks safe final responses through local KoboldCPP TTS, and persists useful transcripts/tasks without leaking model thoughts.
 
+## Immediate Next Milestone: Real-Time UI Validation And Pipeline Hardening
+
+Status: in progress
+
+The prototype now streams a single growing transcript (settled head + re-editable hot tail) with a simplified
+dashboard, runtime-tunable sensitivity, background-cue filtering, and `/no_think` low-latency
+cleanup. The next milestone makes that experience trustworthy and maintainable:
+
+- **Browser validation (Playwright):** the first dashboard UI test exists
+  (`tests/test_ui_playwright.py`, run via `scripts/run-tests.sh --ui`, deps in
+  `requirements-dev.txt`). Expand to cover controls (start/stop/clear), the sensitivity
+  panel + `UpdateWorkerOption`, error/empty states, and real-time growth across many turns.
+- **Architecture hardening:** introduce a `WorkerSupervisor` that owns the start/stop/join
+  lifecycle and per-stage health uniformly (replacing ad-hoc completion flags), so new
+  stages (analysis, TTS) compose cleanly. See
+  [`../modules/voice_prototype.md`](../modules/voice_prototype.md) Worker Lifecycle.
+- **CI:** run the offline suite on push; optionally the Playwright job with a cached browser.
+
+Acceptance: dashboard behavior (transcript grows, full text visible, controls + options
+work, thoughts never shown as final) is verified by Playwright; the pipeline lifecycle is
+supervised; CI runs the offline suite.
+
 ## Milestone 0: Foundation And Project Memory
 
 Status: in progress

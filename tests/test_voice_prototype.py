@@ -84,7 +84,7 @@ class FakeMerger:
             }
         )
         return TranscriptMergeResult(
-            smoothed_text=(existing_smoothed_text + " " + new_raw_text.replace("um ", "")).strip(),
+            smoothed_text=new_raw_text.replace("um ", "").strip(),
             feedback=["removed filler"],
             thoughts=["merge debug"],
         )
@@ -123,7 +123,7 @@ class BlockingMerger:
             self.release_first_call.wait(10.0)
 
         return TranscriptMergeResult(
-            smoothed_text=(existing_smoothed_text + " " + new_raw_text).strip(),
+            smoothed_text=new_raw_text.strip(),
             feedback=[f"merged {call_index}"],
             thoughts=[f"thought {call_index}"],
         )
@@ -152,7 +152,7 @@ class RecordingMerger:
             }
         )
         return TranscriptMergeResult(
-            smoothed_text=(existing_smoothed_text + " " + new_raw_text).strip(),
+            smoothed_text=new_raw_text.strip(),
             feedback=[],
             thoughts=[],
         )
@@ -179,6 +179,21 @@ class ContextMerger:
             }
         )
         return self.responses.pop(0)
+
+
+class TailMerger:
+    """Simulates a model that completes the editable tail with the new words (continue)."""
+
+    def merge(
+        self,
+        existing_smoothed_text: str,
+        new_raw_sections: list[TranscriptSection],
+        recent_raw_context: str = "",
+        current_context_summary: str = "",
+    ) -> TranscriptMergeResult:
+        new_raw_text = joined_section_text(new_raw_sections)
+        combined = (existing_smoothed_text + " " + new_raw_text).strip()
+        return TranscriptMergeResult(smoothed_text=combined, context_action="continue")
 
 
 class FailingMerger:
@@ -436,11 +451,12 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertEqual(merger.calls[1]["context"], "first topic context")
         self.assertEqual(controller.snapshot()["context_summary"], "updated first topic context")
 
-    def test_context_renew_seals_prior_context_into_committed_and_full_log(self) -> None:
+    def test_transcript_accumulates_across_renew_and_never_shrinks(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         log_path = os.path.join(tmp.name, "full.log")
         config = SecretaryConfig(prototype_log_path=log_path)
+        # The merger returns only the cleaned delta; the controller appends it.
         merger = ContextMerger(
             [
                 TranscriptMergeResult(smoothed_text="First topic cleaned.", context_summary="first", context_action="continue"),
@@ -457,23 +473,64 @@ class VoicePrototypeTests(unittest.TestCase):
 
         controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
         self.assertTrue(controller.wait_until_idle())
-        first = controller.snapshot()
-        self.assertEqual(first["smoothed_text"], "First topic cleaned.")
-        self.assertEqual(first["committed_text"], "")
+        self.assertEqual(controller.snapshot()["smoothed_text"], "First topic cleaned.")
 
         controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
         self.assertTrue(controller.wait_until_idle())
-        second = controller.snapshot()
+        full = controller.snapshot()["smoothed_text"]
 
-        # Main panel resets to the new context; prior context is preserved in
-        # committed history and the durable full-text log.
-        self.assertEqual(second["smoothed_text"], "Second topic cleaned.")
-        self.assertIn("First topic cleaned.", second["committed_text"])
+        # The full transcript grows and keeps both contexts; renew starts a new paragraph.
+        self.assertIn("First topic cleaned.", full)
+        self.assertIn("Second topic cleaned.", full)
+        self.assertIn("\n\n", full)
 
         with open(log_path, encoding="utf-8") as handle:
             log_text = handle.read()
         self.assertIn("First topic cleaned.", log_text)
-        self.assertIn("context_renew", log_text)
+        self.assertIn("Second topic cleaned.", log_text)
+
+    def test_continue_merges_new_words_into_editable_tail_and_keeps_head(self) -> None:
+        # Small word lookback so a frozen head forms; the editable tail is completed by the
+        # new words and spliced back after the head (the seam/split sentence is fixed).
+        config = SecretaryConfig(merge_lookback_sentences=0, merge_lookback_words=2)
+        controller = PrototypeController(
+            config=config,
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["the meeting is", "at noon"]),  # type: ignore[arg-type]
+            merger=TailMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        self.assertEqual(controller.snapshot()["smoothed_text"], "the meeting is")
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        # Tail "meeting is" was merged with "at noon"; head "the" preserved → one sentence.
+        self.assertEqual(controller.snapshot()["smoothed_text"], "the meeting is at noon")
+
+    def test_paragraph_action_starts_new_paragraph_and_keeps_context(self) -> None:
+        merger = ContextMerger(
+            [
+                TranscriptMergeResult(smoothed_text="First note.", context_action="continue", context_summary="topic"),
+                TranscriptMergeResult(smoothed_text="Second note.", context_action="paragraph", context_summary=""),
+            ]
+        )
+        controller = PrototypeController(
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["first", "second"]),  # type: ignore[arg-type]
+            merger=merger,
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        state = controller.snapshot()
+        self.assertEqual(state["smoothed_text"], "First note.\n\nSecond note.")
+        # paragraph keeps the same topic context (only renew would clear/replace it).
+        self.assertEqual(state["context_summary"], "topic")
 
     def test_merge_is_not_deferred_by_active_audio_alone(self) -> None:
         # Streaming change: cleanup must run between STT calls during a long utterance,
@@ -539,7 +596,7 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertEqual(state["discarded_transcriptions"][0]["text"], "(coughing)")
         self.assertEqual(state["discarded_transcriptions"][0]["reason"], "non_content_artifact")
 
-    def test_stop_seals_working_transcript_to_full_log(self) -> None:
+    def test_full_log_receives_cleaned_deltas_in_real_time(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         log_path = os.path.join(tmp.name, "full.log")
@@ -553,12 +610,10 @@ class VoicePrototypeTests(unittest.TestCase):
 
         controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
         self.assertTrue(controller.wait_until_idle())
-        controller.handle_command(AssistantCommand(type="StopAutomaticCapture"))
 
         with open(log_path, encoding="utf-8") as handle:
             log_text = handle.read()
         self.assertIn("hello world", log_text)
-        self.assertIn("session_stop", log_text)
 
 
 if __name__ == "__main__":

@@ -3,17 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>pySecretary Prototype</title>
+    <title>pySecretary</title>
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
     <main class="app">
       <header class="topbar">
-        <div>
+        <div class="title-block">
           <h1>pySecretary</h1>
-          <div id="status" class="status">stopped</div>
-          <div id="audio-state" class="audio-state">audio: quiet level 0.000</div>
-          <div id="queue-depth" class="queue-depth">queues: audio 0 / text 0</div>
+          <div class="status-line">
+            <span id="status" class="status">stopped</span>
+            <span id="audio-state" class="audio-state">audio: quiet 0.000</span>
+            <span id="queue-depth" class="queue-depth">queues 0 / 0</span>
+          </div>
         </div>
         <div class="controls" aria-label="capture controls">
           <button id="start-button" type="button">Start</button>
@@ -22,80 +24,48 @@
         </div>
       </header>
 
-      <section class="meter-band" aria-label="audio level">
-        <div id="audio-meter" class="audio-meter"></div>
+      <div class="meter-band" aria-label="audio level"><div id="audio-meter" class="audio-meter"></div></div>
+
+      <section class="transcript-panel">
+        <pre id="transcript" class="transcript" aria-live="polite"></pre>
       </section>
 
-      <section class="workspace">
-        <section class="panel panel-output">
-          <h2>Smoothed Output</h2>
-          <pre id="smoothed-output"></pre>
-        </section>
+      <details class="diagnostics">
+        <summary>Details &amp; settings</summary>
+        <div class="diag-grid">
+          <section class="diag-card">
+            <h2>Sensitivity</h2>
+            <div class="hint">Lower the energy threshold to pick up quieter speech. Watch the live level above while you talk.</div>
+            <form id="options-form" class="options">
+              <label>Energy threshold (start)<input id="opt-energy" name="energy_threshold" type="number" min="0" step="0.001"></label>
+              <label>Min peak level (keep)<input id="opt-peak" name="transcription_min_peak_level" type="number" min="0" step="0.001"></label>
+              <label>Silence gap (s)<input id="opt-silence" name="silence_gap_seconds" type="number" min="0" step="0.1"></label>
+              <label>Min speech (s)<input id="opt-minspeech" name="min_speech_seconds" type="number" min="0" step="0.05"></label>
+              <label>Max turn (s)<input id="opt-maxturn" name="max_turn_seconds" type="number" min="0" step="1"></label>
+              <button id="options-apply" type="submit">Apply</button>
+            </form>
+          </section>
 
-        <section class="panel">
-          <h2>Raw Transcript</h2>
-          <div id="raw-transcript" class="stack"></div>
-        </section>
+          <section class="diag-card">
+            <h2>Raw transcript (STT)</h2>
+            <div id="raw-transcript" class="stack compact"></div>
+          </section>
 
-        <section class="panel">
-          <details>
-            <summary><h2>Full Transcript (all contexts)</h2></summary>
-            <pre id="full-transcript" class="scroll"></pre>
-          </details>
-        </section>
+          <section class="diag-card">
+            <h2>Latest cleanup note</h2>
+            <pre id="latest-feedback" class="small"></pre>
+            <h2>Latest thought (debug)</h2>
+            <pre id="latest-thought" class="small"></pre>
+          </section>
 
-        <section class="panel">
-          <h2>Sensitivity &amp; Worker Options</h2>
-          <div class="hint">Lower the energy threshold to pick up quieter speech. Watch the live level above while you talk.</div>
-          <form id="options-form" class="options">
-            <label>Energy threshold (start)
-              <input id="opt-energy" name="energy_threshold" type="number" min="0" step="0.001">
-            </label>
-            <label>Min peak level (keep)
-              <input id="opt-peak" name="transcription_min_peak_level" type="number" min="0" step="0.001">
-            </label>
-            <label>Silence gap (s)
-              <input id="opt-silence" name="silence_gap_seconds" type="number" min="0" step="0.1">
-            </label>
-            <label>Min speech (s)
-              <input id="opt-minspeech" name="min_speech_seconds" type="number" min="0" step="0.05">
-            </label>
-            <label>Max turn (s)
-              <input id="opt-maxturn" name="max_turn_seconds" type="number" min="0" step="1">
-            </label>
-            <button id="options-apply" type="submit">Apply</button>
-          </form>
-        </section>
-
-        <section class="panel">
-          <h2>Latest Feedback</h2>
-          <pre id="latest-feedback"></pre>
-        </section>
-
-        <section class="panel">
-          <h2>Latest Thought</h2>
-          <pre id="latest-thought"></pre>
-        </section>
-
-        <section class="panel">
-          <h2>Selected Turn</h2>
-          <div id="selected-turn" class="meta"></div>
-          <div class="detail-label">Feedback</div>
-          <div id="selected-feedback" class="stack compact"></div>
-          <div class="detail-label">Thought</div>
-          <div id="selected-thoughts" class="stack compact"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Errors</h2>
-          <div id="errors" class="stack"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Events</h2>
-          <div id="events" class="stack compact"></div>
-        </section>
-      </section>
+          <section class="diag-card">
+            <h2>Errors</h2>
+            <div id="errors" class="stack compact"></div>
+            <h2>Events</h2>
+            <div id="events" class="stack compact"></div>
+          </section>
+        </div>
+      </details>
     </main>
     <script src="/static/app.js"></script>
   </body>

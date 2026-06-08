@@ -111,9 +111,9 @@ covered by `tests/test_config.py`):
 - Merge/scheduling: `PSEC_LLM_MERGE_IDLE_SECONDS`, `PSEC_LLM_MERGE_MAX_TOKENS`,
   `PSEC_LLM_DISABLE_THINKING` (skip `<think>` generation to cut latency),
   `PSEC_WORKER_POLL_SECONDS`.
-- Context guard: `PSEC_LLM_CONTEXT_WINDOW_TOKENS`,
-  `PSEC_LLM_CONTEXT_RESPONSE_RESERVED_TOKENS`, `PSEC_LLM_CONTEXT_PROMPT_OVERHEAD_TOKENS`,
-  `PSEC_LLM_CONTEXT_SAFETY_TOKENS`.
+- Transcript seam (re-editable hot tail): `PSEC_MERGE_LOOKBACK_SENTENCES`,
+  `PSEC_MERGE_LOOKBACK_WORDS` (how much of the end stays editable so the model can fix
+  split sentences; everything older is settled/frozen).
 - Persistence: `PSEC_TRANSCRIPT_PATH` (spoken/conversation transcript),
   `PSEC_THOUGHT_LOG_PATH` (separate thought-trace log), `PSEC_PROTOTYPE_LOG_PATH`
   (durable full-text transcript log across contexts), `PSEC_OUTPUT_WAV_PATH`.
@@ -131,7 +131,8 @@ Responsibilities:
 - Fetch server metadata from `/api/extra/version`.
 - Fetch model metadata from `/v1/models` or `/api/v1/model`.
 - Detect the model context-window limit from runtime metadata
-  (`KoboldCppProfile.context_limit_tokens`), used by the merge context guard.
+  (`KoboldCppProfile.context_limit_tokens`); recorded for diagnostics/future use (the merge
+  prompt is intrinsically small, so it is not currently consumed).
 - Pull API documentation from `/api` and extract available routes.
 - Select preferred routes for LLM, STT, and TTS.
 - Expose stable methods for other modules:
@@ -190,6 +191,13 @@ Pure, deterministic prompt budgeting for transcript merge. Produces a
 raw sections are never compacted; older cleaned text is preserved outside the prompt and
 recombined afterward. Detailed contract:
 [`docs/modules/context_budget.md`](modules/context_budget.md).
+
+### `pysecretary.llm_queue`
+
+Coalescing request queue for LLM update calls. Groups requests by `context_key`, combines
+the pending requests of a context into one call, and keeps unrelated contexts
+(clients/streams) independent. Transport-agnostic; a worker claims a batch and runs the
+call. Detailed contract: [`docs/modules/llm_queue.md`](modules/llm_queue.md).
 
 ### `pysecretary.events`
 
@@ -266,8 +274,9 @@ module docs.
 | `KoboldCppProfile` | `koboldcpp` | Discovered server state, selected routes, `context_limit_tokens` |
 | `AudioTurn` | `audio` | One captured speech turn (wav + timing/level; `is_partial` for streamed long speech) |
 | `AssistantEvent` / `AssistantCommand` | `events` | Backend↔surface messages |
-| `PrototypeState` | `events` | Reduced UI-facing snapshot (`smoothed_text` = current context, `committed_text` = sealed history) |
+| `PrototypeState` | `events` | Reduced UI-facing snapshot (`smoothed_text` = full transcript; settled head + re-editable hot tail; `context_summary` = compact context memory) |
 | `QueuedAudioTurn` / `QueuedRawTranscript` | `prototype` | Queue items with ids/sequence/timing |
+| `LLMRequest` | `llm_queue` | A coalescible LLM work item (context_key, sequence, payload) |
 | `TranscriptSection` | `transcript` | Raw STT section with provenance for merge |
 | `TranscriptMergeResult` | `transcript` | Updated transcript + feedback + thoughts + context |
 | `ThoughtSplit` | `transcript` | Final-safe text vs. extracted thoughts |

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Iterable
 from typing import Protocol
 
-from .context_budget import combine_stable_prefix, prepare_merge_context
 from .llm import LLMClient
 
 
@@ -126,40 +125,23 @@ class LLMTranscriptMerger:
         recent_raw_context: str = "",
         current_context_summary: str = "",
     ) -> TranscriptMergeResult:
+        """Clean the new sections against the editable transcript tail.
+
+        ``existing_smoothed_text`` is the small re-editable tail of the transcript the
+        controller chose (see ``split_recent_tail``); everything older is already settled.
+        The model returns, per ``context_action``: on ``continue`` the corrected tail merged
+        with the new sections; on ``paragraph``/``renew`` only the cleaned new sections. The
+        controller decides how to splice the result back in.
+        """
         new_raw_text = format_transcript_sections_for_prompt(new_raw_sections)
-        prepared_context = prepare_merge_context(
+        response_text = self.llm.merge_transcript_context(
             existing_smoothed_text=existing_smoothed_text,
+            new_raw_text=new_raw_text,
             recent_raw_context=recent_raw_context,
             current_context_summary=current_context_summary,
-            new_raw_text=new_raw_text,
-            context_limit_tokens=_context_limit_tokens(self.llm),
-            response_reserved_tokens=_config_int(self.llm, "llm_context_response_reserved_tokens", 1024),
-            safety_tokens=_config_int(self.llm, "llm_context_safety_tokens", 256),
-            prompt_overhead_tokens=_config_int(self.llm, "llm_context_prompt_overhead_tokens", 768),
+            prior_transcript_was_reduced=False,
         )
-        response_text = self.llm.merge_transcript_context(
-            existing_smoothed_text=prepared_context.existing_smoothed_text,
-            new_raw_text=prepared_context.new_raw_text,
-            recent_raw_context=prepared_context.recent_raw_context,
-            current_context_summary=prepared_context.current_context_summary,
-            prior_transcript_was_reduced=bool(prepared_context.stable_prefix),
-        )
-        result = parse_merge_response(response_text)
-        if not result.smoothed_text:
-            return TranscriptMergeResult(
-                smoothed_text=existing_smoothed_text,
-                feedback=result.feedback + ["LLM merge returned no smoothed text; kept previous transcript."],
-                thoughts=result.thoughts,
-            )
-        if prepared_context.stable_prefix:
-            feedback = list(result.feedback)
-            feedback.append("Context guard preserved older cleaned transcript outside the LLM prompt.")
-            return replace(
-                result,
-                smoothed_text=combine_stable_prefix(prepared_context.stable_prefix, result.smoothed_text),
-                feedback=feedback,
-            )
-        return result
+        return parse_merge_response(response_text)
 
 
 def format_transcript_sections_for_prompt(sections: Iterable[TranscriptSection]) -> str:
@@ -198,26 +180,8 @@ def _normalize_feedback(value: object) -> list[str]:
 
 def _normalize_context_action(value: object) -> str:
     action = str(value or "continue").strip().lower()
-    if action in {"renew", "new", "new_conversation", "reset"}:
+    if action in {"renew", "new", "new_conversation", "reset", "new_topic"}:
         return "renew"
+    if action in {"paragraph", "new_paragraph", "new_para", "newline", "break"}:
+        return "paragraph"
     return "continue"
-
-
-def _context_limit_tokens(llm: object) -> int:
-    config = getattr(llm, "config", None)
-    api = getattr(llm, "api", None)
-    profile = getattr(api, "profile", None)
-    detected = getattr(profile, "context_limit_tokens", None)
-    if isinstance(detected, int) and detected > 0:
-        return detected
-    return _config_int(llm, "llm_context_window_tokens", 16384)
-
-
-def _config_int(llm: object, name: str, default: int) -> int:
-    config = getattr(llm, "config", None)
-    value = getattr(config, name, default)
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default

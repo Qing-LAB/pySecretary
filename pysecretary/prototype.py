@@ -10,10 +10,11 @@ from typing import Callable, Iterator, Protocol
 
 from .audio import AmplitudeVadConfig, AudioTurn, listen_for_speech_turns
 from .config import SecretaryConfig
-from .context_budget import combine_stable_prefix
+from .context_budget import combine_stable_prefix, split_recent_tail
 from .events import AssistantCommand, AssistantEvent, PrototypeState, make_event, reduce_prototype_state
 from .koboldcpp import KoboldCppClient
 from .llm import LLMClient
+from .llm_queue import LLMRequest, LLMRequestQueue
 from .stt import (
     SpeechToTextClient,
     clean_transcript_artifacts,
@@ -21,7 +22,7 @@ from .stt import (
     is_non_speech_transcript,
 )
 from .transcript import LLMTranscriptMerger, TranscriptMergeResult, TranscriptMerger, TranscriptSection
-from .utils import append_text, timestamp
+from .utils import timestamp
 
 
 @dataclass(frozen=True)
@@ -96,10 +97,13 @@ class PrototypeController:
         self._lock = threading.RLock()
         self._subscribers: list[queue.Queue[AssistantEvent]] = []
         self._audio_turn_queue: queue.Queue[QueuedAudioTurn] = queue.Queue()
-        self._raw_transcript_queue: queue.Queue[QueuedRawTranscript] = queue.Queue()
+        # Coalescing LLM merge queue: raw transcript sections for the same context are
+        # combined into one cleanup call. A single context key is used for the prototype's
+        # single mic stream; multiple streams/clients would use distinct keys.
+        self._merge_queue = LLMRequestQueue()
+        self._context_key = "default"
         self._stt_active = False
         self._next_sequence = 1
-        self._working_sealed = False
         # Shared, mutable VAD/gate thresholds so sensitivity can be re-tuned at runtime
         # (UpdateWorkerOption) while capture keeps reading the same instance.
         self._vad = AmplitudeVadConfig.from_secretary_config(self.config)
@@ -139,9 +143,8 @@ class PrototypeController:
             self._capture_done.clear()
             self._stt_done.clear()
             self._audio_turn_queue = queue.Queue()
-            self._raw_transcript_queue = queue.Queue()
+            self._merge_queue = LLMRequestQueue()
             self._next_sequence = 1
-            self._working_sealed = False
             self._emit("RecordingStarted")
             self._emit("AssistantStateChanged", status="listening")
             self._emit_queue_depths()
@@ -155,7 +158,6 @@ class PrototypeController:
 
     def stop(self) -> None:
         self._stop_event.set()
-        self._seal_working_to_log(reason="session_stop")
         self._emit("RecordingStopped")
         self._emit("AssistantStateChanged", status="stopped")
 
@@ -221,29 +223,31 @@ class PrototypeController:
             self._emit_queue_depths()
 
     def _merge_loop(self) -> None:
+        poll_seconds = max(0.01, self.config.worker_poll_seconds)
         try:
             while True:
-                if self._stop_event.is_set() and self._raw_transcript_queue.empty():
+                if self._stop_event.is_set():
                     break
-                try:
-                    raw_transcript = self._raw_transcript_queue.get(timeout=self.config.worker_poll_seconds)
-                except queue.Empty:
+                if not self._merge_queue.has_pending(self._context_key):
                     if self._stt_done.is_set():
                         break
+                    sleep(poll_seconds)
                     continue
 
-                extra_transcripts: list[QueuedRawTranscript] = []
+                # STT keeps priority on the shared server; wait for a dispatch slot.
+                pending = self._merge_queue.peek(self._context_key)
+                turn_id = pending.payload.turn_id if pending is not None else ""
+                if not self._wait_for_merge_slot(turn_id):
+                    continue  # stopped while waiting; loop re-checks and exits
+
+                batch = self._merge_queue.begin(self._context_key)
+                if batch is None:
+                    continue
                 try:
                     self._emit_queue_depths()
-                    if self._wait_for_merge_slot(raw_transcript.turn_id):
-                        extra_transcripts = self._drain_raw_transcript_queue()
-                        transcript_batch = [raw_transcript, *extra_transcripts]
-                        self._emit_queue_depths()
-                        self._process_merge(transcript_batch)
+                    self._process_merge([request.payload for request in batch])
                 finally:
-                    self._raw_transcript_queue.task_done()
-                    for _ in extra_transcripts:
-                        self._raw_transcript_queue.task_done()
+                    self._merge_queue.complete(self._context_key)
                     self._emit_queue_depths()
         except Exception as exc:  # pragma: no cover - defensive boundary
             self._worker_failed("merge", exc)
@@ -322,16 +326,20 @@ class PrototypeController:
                 speech_seconds=queued_turn.turn.speech_seconds,
                 peak_level=queued_turn.turn.peak_level,
             )
-            self._raw_transcript_queue.put(
-                QueuedRawTranscript(
-                    turn_id=turn_id,
+            self._merge_queue.submit(
+                LLMRequest(
+                    context_key=self._context_key,
                     sequence=queued_turn.sequence,
-                    text=raw_text,
-                    captured_at=queued_turn.captured_at,
-                    transcribed_at=transcribed_at,
-                    duration_seconds=queued_turn.turn.duration_seconds,
-                    speech_seconds=queued_turn.turn.speech_seconds,
-                    peak_level=queued_turn.turn.peak_level,
+                    payload=QueuedRawTranscript(
+                        turn_id=turn_id,
+                        sequence=queued_turn.sequence,
+                        text=raw_text,
+                        captured_at=queued_turn.captured_at,
+                        transcribed_at=transcribed_at,
+                        duration_seconds=queued_turn.turn.duration_seconds,
+                        speech_seconds=queued_turn.turn.speech_seconds,
+                        peak_level=queued_turn.turn.peak_level,
+                    ),
                 )
             )
             self._emit_queue_depths()
@@ -349,11 +357,18 @@ class PrototypeController:
             section_count=len(sections),
         )
         snap = self.snapshot()
-        working_in = str(snap.get("smoothed_text", ""))
-        committed_in = str(snap.get("committed_text", ""))
+        current = str(snap.get("smoothed_text", ""))
         current_context_summary = str(snap.get("context_summary", ""))
+        # Only the recent "hot" tail is re-editable; everything older is settled and frozen
+        # by the program so it can never be lost. The model sees the hot tail (which may end
+        # mid-sentence) and decides how the new speech relates to it.
+        head, editable_tail = split_recent_tail(
+            current,
+            self.config.merge_lookback_sentences,
+            self.config.merge_lookback_words,
+        )
         result = self.merger.merge(
-            existing_smoothed_text=working_in,
+            existing_smoothed_text=editable_tail,
             new_raw_sections=sections,
             recent_raw_context=self._recent_raw_context(),
             current_context_summary=current_context_summary,
@@ -361,29 +376,33 @@ class PrototypeController:
         if self._stop_event.is_set():
             return
 
-        # The "smoothed_text" panel stays focused on the current context. When the
-        # merge reports a new topic (`renew`), the previous context is sealed into the
-        # persistent committed history and the durable full-text log, and the main
-        # panel resets to the cleaned new sections. This guarantees prior text is never
-        # lost across context switches (full text remains in committed_text + the log).
-        if result.context_action == "renew" and working_in.strip():
-            committed_out = combine_stable_prefix(committed_in, working_in)
-            self._append_full_transcript_log(working_in, reason="context_renew")
-        else:
-            committed_out = committed_in
-        main_text = result.smoothed_text
+        region = result.smoothed_text.strip()
 
         for thought in result.thoughts:
             self._emit("ThoughtCaptured", turn_id=turn_id, turn_ids=turn_ids, text=thought)
         for feedback in result.feedback:
             self._emit("MergeFeedbackReceived", turn_id=turn_id, turn_ids=turn_ids, text=feedback)
+
+        if not region:
+            full_text = current
+        elif result.context_action in ("renew", "paragraph") and current.strip():
+            # Settle the whole current transcript and start a new paragraph from the new
+            # sections. (renew also renews the context summary in the reducer.)
+            full_text = f"{current.rstrip()}\n\n{region}"
+        else:
+            # Continue: the region is the corrected hot tail merged with the new sections;
+            # splice it after the frozen head so the seam (and split sentences) are fixed.
+            full_text = combine_stable_prefix(head, region)
+
+        if full_text != current:
+            self._write_full_transcript_log(full_text)
+
         self._emit(
             "SmoothedTranscriptUpdated",
             turn_id=turn_id,
             turn_ids=turn_ids,
             section_count=len(sections),
-            text=main_text,
-            committed_text=committed_out,
+            text=full_text,
             context_summary=result.context_summary,
             context_action=result.context_action,
         )
@@ -449,34 +468,19 @@ class PrototypeController:
             options = {field: float(getattr(self._vad, field)) for field in self._WORKER_OPTION_FIELDS}
         self._emit("WorkerOptionsChanged", options=options)
 
-    def _seal_working_to_log(self, reason: str) -> None:
-        with self._lock:
-            if self._working_sealed:
-                return
-            self._working_sealed = True
-        working = str(self.snapshot().get("smoothed_text", ""))
-        self._append_full_transcript_log(working, reason=reason)
-
-    def _append_full_transcript_log(self, text: str, reason: str) -> None:
-        # Best-effort durable record of the full transcript across contexts. Failures
-        # here must never disrupt the capture pipeline.
-        text = (text or "").strip()
+    def _write_full_transcript_log(self, full_text: str) -> None:
+        # Best-effort durable snapshot of the complete current transcript. Overwritten on
+        # each update so the file always holds the full text (the hot tail can be re-edited,
+        # so appending deltas would duplicate). Failures must never disrupt the pipeline.
         path = getattr(self.config, "prototype_log_path", "")
-        if not text or not path:
+        if not path:
             return
         try:
-            append_text(path, f"[{timestamp()}] {reason}\n{text}\n{'-' * 60}")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(f"# pySecretary transcript — updated {timestamp()}\n\n{full_text}\n")
         except OSError:
             if self.config.debug:
                 print(f"Could not write prototype transcript log at {path}")
-
-    def _drain_raw_transcript_queue(self) -> list[QueuedRawTranscript]:
-        transcripts: list[QueuedRawTranscript] = []
-        while True:
-            try:
-                transcripts.append(self._raw_transcript_queue.get_nowait())
-            except queue.Empty:
-                return transcripts
 
     def _to_transcript_section(self, raw_transcript: QueuedRawTranscript) -> TranscriptSection:
         return TranscriptSection(
@@ -541,7 +545,7 @@ class PrototypeController:
         self._emit(
             "QueueDepthChanged",
             audio_turn_queue=self._audio_turn_queue.qsize(),
-            raw_transcript_queue=self._raw_transcript_queue.qsize(),
+            raw_transcript_queue=self._merge_queue.pending_count(self._context_key),
         )
 
     def _emit_audio_level(
@@ -595,15 +599,12 @@ class DemoTranscriptMerger:
         current_context_summary: str = "",
     ) -> TranscriptMergeResult:
         new_raw_text = " ".join(section.text for section in new_raw_sections)
+        # Delta model: return only the cleaned new sections; the controller appends them.
         cleaned = re.sub(r"\b(um|uh|hmm)\b\s*", "", new_raw_text, flags=re.IGNORECASE).strip()
-        if existing_smoothed_text:
-            smoothed = f"{existing_smoothed_text}\n{cleaned}"
-        else:
-            smoothed = cleaned
         return TranscriptMergeResult(
-            smoothed_text=smoothed,
-            feedback=["Demo merge removed common filler words and appended the new speech section."],
-            thoughts=["Demo trace: compared the new raw section against the current smoothed transcript."],
+            smoothed_text=cleaned,
+            feedback=["Demo merge removed common filler words from the new speech section."],
+            thoughts=["Demo trace: cleaned the new raw section."],
         )
 
 

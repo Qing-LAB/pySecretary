@@ -32,7 +32,7 @@ The command `python -m pysecretary prototype-ui --mock` should run the same dash
 
 The smoothed transcript panel is the primary output. It should update as each speech section is processed. The raw panel should show exactly what STT returned. The feedback/thought panel may show LLM diagnostic text, captured `<think>` content, or merge notes, but it must never feed back into the smoothed output as normal transcript text.
 
-To help the user track progress, the smoothed transcript should read as a live, streaming update: the newly changed tail of the active context is briefly highlighted as it arrives, and a blinking cursor follows it while capture is running. The scrollable full-transcript view distinguishes settled history (`committed_text`, muted color) from the active context (`smoothed_text`, accent color). See [`ui.md`](ui.md) for the cross-UI rule.
+To help the user track progress, the smoothed transcript should read as a live, streaming update: it is one growing, auto-scrolling transcript; the newly appended tail is briefly highlighted as it arrives, and a blinking cursor follows it while capture is running. See [`ui.md`](ui.md) for the cross-UI rule.
 
 The UI should not render one unbounded global thought stream. It should show the latest thought/feedback as live activity, and show turn-specific thought/feedback when the user selects a raw transcript item.
 
@@ -127,17 +127,17 @@ Lifecycle rules:
 
 - **Start** (`StartAutomaticCapture`): idempotent. If workers are already alive it is a
   no-op; otherwise it clears the stop signal and completion flags, recreates the queues,
-  resets the sequence counter and per-session seal flag, emits `RecordingStarted` /
+  resets the sequence counter, emits `RecordingStarted` /
   `AssistantStateChanged(listening)`, and starts the three daemon threads.
 - **Drain-then-exit**: each consumer loops until `stop is set AND its input queue is empty`,
   or until `its upstream is done AND its input queue is empty`. This guarantees in-flight
   turns are finished rather than dropped on a normal stop. Capture (the source) sets
   `capture_done` when the turn source is exhausted or stopped; STT sets `stt_done` when it
   exits.
-- **Stop** (`StopAutomaticCapture` / Ctrl+C): sets the stop signal, seals the current
-  working transcript to the full-text log once, and emits `RecordingStopped` /
-  `AssistantStateChanged(stopped)`. Capture stops pulling; STT and merge drain remaining
-  queued work and exit.
+- **Stop** (`StopAutomaticCapture` / Ctrl+C): sets the stop signal and emits
+  `RecordingStopped` / `AssistantStateChanged(stopped)`. The full transcript is written to
+  the snapshot file on every merge update, so nothing extra is flushed on stop. Capture stops
+  pulling; STT and merge exit.
 - **Join**: `wait_until_idle()` joins all workers with a timeout for clean shutdown and for
   deterministic tests.
 - **Errors**: a worker exception calls `_worker_failed`, which sets the stop signal and
@@ -160,10 +160,10 @@ Required scheduling behavior for this single-server prototype:
 - LLM merge **does not** wait for the speaker to pause. With partial-turn streaming, raw
   sections arrive mid-utterance, and the merge worker cleans them between STT calls so the
   smoothed transcript updates in near real time;
-- while merge is running, new raw transcript sections accumulate in the transcript queue
-  rather than triggering overlapping LLM calls;
-- after the previous cleanup returns, the merge worker drains currently queued raw
-  transcript sections and processes them as one chronological batch;
+- while merge is running, new raw transcript sections accumulate in the coalescing LLM
+  request queue ([`llm_queue.md`](llm_queue.md)) rather than triggering overlapping calls;
+- after the previous cleanup returns, the merge worker claims the coalesced pending sections
+  and processes them as one chronological batch;
 - deferred merge work emits `TranscriptMergeDeferred` so the UI/CLI can show that cleanup
   is waiting (on STT) rather than lost;
 - merge prompts request compact JSON, cap output tokens, and disable model thinking
@@ -279,97 +279,123 @@ The prompt should instruct the LLM to:
 - never add new information, opinions, summaries, or invented details, and never omit meaningful content,
 - keep merge notes separate from the transcript.
 
-### Topic / context switch detection
+### Topic / context switch detection (three-way)
 
-The model sets `context_action` by judging whether the new sections belong to the current
-subject:
+The model judges how the new sections relate to the editable tail and the context summary,
+and sets `context_action`:
 
-- `continue` when they extend, clarify, correct, or respond to the current subject, or share
-  the same task, entities, or thread — even across a short pause.
-- `renew` only on a genuine change of subject (new task, document, recipient, meeting, or
-  unrelated thought) or an explicit cue ("new note", "different topic", "moving on",
-  "let's start over").
-- When unsure, prefer `continue` so related content is not split.
+- `continue`: same thought/topic — it continues or completes the trailing (possibly
+  incomplete) sentence/paragraph. The model returns the **corrected editable tail merged
+  with the new sections**; the program splices it after the frozen head, fixing the seam.
+- `paragraph`: same overall topic but a clearly new sentence/paragraph. The model returns
+  **only the cleaned new sections**; the program settles the prior text and starts a new
+  paragraph, keeping the context summary.
+- `renew`: a different topic/conversation. The model returns **only the cleaned new
+  sections**; the program settles the prior text, starts a new paragraph, and renews the
+  context summary.
+- When unsure between `renew` and `paragraph`, prefer `paragraph` so related content is not
+  split.
 
-`context_summary` should carry the current topic plus key entities, name spellings,
-terminology, and the tense/voice in use, so the next turn stays consistent and switches are
-easier to detect.
+This is what lets the secretary decide what is **settled** (frozen, older than the hot tail)
+versus what stays **hot** (the re-editable tail it can still revise).
 
-The user message to the LLM should separate task instructions, the editable transcript
-tail, current context summary, recent raw context, and new raw sections. Raw sections
-should be serialized as structured data, not pasted as free-form instructions.
+### Two kinds of memory: detailed text vs compact context
 
-### Context action and persistence
+The merge keeps these separate:
 
-- On `continue`, the model returns the cleaned editable tail combined with the new sections.
-- On `renew`, the model returns **only** the cleaned new sections; the program preserves
-  the prior context automatically (see Persistent Full Transcript below). This is why the
-  prompt no longer asks the model to echo earlier text on a topic switch — preserving it
-  is the program's job, not the model's.
+- **Detailed cleaned text** — `smoothed_text`, the full transcript. Only its recent **hot
+  tail** is re-editable (see Persistent Full Transcript); older text is settled/frozen. The
+  model is sent only the hot tail, not the whole transcript.
+- **Compact context** — `context_summary`, a short model-maintained note of the current
+  topic, key entities, name spellings, and tense/voice. It is the "is this the same context?"
+  memory and travels with every merge so the model can judge continuity and stay consistent
+  without re-reading the whole transcript.
+
+`context_summary` lifecycle: `continue`/`paragraph` refine or keep it; `renew` replaces/clears
+it for the new topic. It is stored in state and fed into the next merge.
+
+#### Where each piece lives (data locations and persistence)
+
+| Data | In-memory state (JSON to UI) | Sent in the per-merge LLM JSON | Persisted to disk |
+| --- | --- | --- | --- |
+| Detailed cleaned text (`smoothed_text`) | yes — full transcript | only its hot-tail slice | yes — `prototype_log_path` full snapshot, overwritten each update |
+| Compact context (`context_summary`) | yes — separate field | yes (sent and returned each call) | no — memory only |
+| New raw text from audio (STT sections) | yes — `raw_transcripts` + coalescing queue | yes — as the new sections | no |
+| Per-merge LLM request/response | — | transient JSON over HTTP to KoboldCPP | no |
+
+So the detailed text and the compact context are separated **by field** in the in-memory
+state (both are JSON the UI reads), not by store. The durable file currently holds only the
+full detailed text snapshot; `context_summary` is not yet persisted. (A future option is a
+sidecar JSON storing `context_summary`/`context_action`/timestamps so a session can be fully
+reloaded, not just read.)
+
+The user message to the LLM separates task instructions, the editable tail, the context
+summary, recent raw context, and new raw sections. Raw sections are serialized as structured
+data, not pasted as free-form instructions.
 
 Preferred JSON keys:
 
-- `smoothed_text`
+- `smoothed_text` (continue: corrected tail + new; paragraph/renew: new only)
 - `context_summary`
-- `context_action`: `continue` or `renew`
+- `context_action`: `continue`, `paragraph`, or `renew`
 - `feedback`
 
 Preferred model output is JSON. The prototype must tolerate plain text fallback.
 
-## Persistent Full Transcript
+## Persistent Full Transcript (hot tail + settled head)
 
-The `smoothed_text` panel intentionally **focuses on the current context** so the active
-conversation stays readable. Earlier contexts must never be lost when the topic switches.
-The controller therefore separates two pieces of state:
+`smoothed_text` holds the **single, full, growing transcript** — everything cleaned so
+far — and is the primary UI surface. It never loses settled text.
 
-- `smoothed_text`: cleaned text for the current context (the main panel).
-- `committed_text`: sealed history of previous contexts (program-owned, never sent to the
-  model for rewrite).
+The program, not the model, owns this transcript and splits it into:
 
-The full transcript is `committed_text` + `smoothed_text`, exposed in the state snapshot
-so the UI can offer a scrollable full-text view.
+- a **settled head** — everything older than the lookback window, frozen by the program and
+  never sent to the model, so it cannot be lost; and
+- a **hot tail** — the last `merge_lookback_sentences` sentences (capped to
+  `merge_lookback_words` words), which is re-editable. `split_recent_tail` computes the split.
 
-Sealing rules (controller-owned, independent of model behavior):
+Only the hot tail is sent to the model (it may end mid-sentence), so the model can fix the
+seam and complete a split sentence — but only the small hot region is ever at risk.
 
-- On `context_action == "renew"`, the prior `smoothed_text` is appended to `committed_text`
-  and to a durable, timestamped log file (`config.prototype_log_path`, default
-  `prototype_transcript.log`, gitignored via `*.log`); the main panel resets to the cleaned
-  new sections.
-- On stop, the current `smoothed_text` is sealed to the log once per session.
-- Log writes are best-effort and must never disrupt the capture pipeline.
+Splice rules (controller-owned), driven by `context_action`:
+
+- `continue`: the model returns the corrected hot tail merged with the new sections; the
+  controller replaces the hot tail → `head + region` (seam/split-sentence fixed).
+- `paragraph` / `renew`: the model returns only the cleaned new sections; the controller
+  keeps the whole current transcript and starts a new paragraph → `current + "\n\n" + region`.
+  (`renew` also renews the context summary.)
+- An empty region leaves the transcript unchanged.
+- After each update the full transcript is written (overwritten) to a durable snapshot file
+  (`config.prototype_log_path`, default `prototype_transcript.log`, gitignored via `*.log`),
+  so the complete text survives a crash. Writes are best-effort and never disrupt capture.
 
 ```mermaid
 flowchart LR
-    NEW[new sections] --> M[merge]
-    M -->|continue| W[smoothed_text<br/>current context]
-    M -->|renew| SEAL[seal prior context]
-    SEAL --> C[committed_text<br/>in-memory history]
-    SEAL --> LOG[(prototype_transcript.log<br/>timestamped, durable)]
-    M -->|renew| W2[smoothed_text = cleaned new sections]
-    C --> FULL[full transcript = committed + smoothed]
-    W --> FULL
+    CUR[smoothed_text] --> SP[split_recent_tail]
+    SP --> HEAD[settled head<br/>frozen, not sent]
+    SP --> HOT[hot tail<br/>re-editable]
+    NEW[new raw sections] --> M[merge]
+    HOT --> M
+    M -->|continue: tail+new| R1[region]
+    M -->|paragraph/renew: new only| R2[region]
+    R1 --> SPLICE[head + region]
+    R2 --> APPEND[current + new paragraph + region]
+    SPLICE --> FULL[smoothed_text]
+    APPEND --> FULL
+    FULL --> LOG[(prototype_transcript.log<br/>full snapshot, durable)]
 ```
 
-This guarantees the user's complaint — losing old text on a context switch — cannot
-happen: the prior context survives in both `committed_text` and the log file.
+This guarantees the user's complaint — losing old text / only the last statement showing —
+cannot happen: only the small hot tail can change; everything settled only grows.
 
-## Context Window Guard
+## Prompt Size
 
-The app should detect the LLM context window from KoboldCPP when the API exposes it. If discovery cannot find a reliable limit, the app should use a configurable fallback. The guard exists to avoid sending a prompt that overflows the local model context.
-
-Required behavior:
-
-- Probe runtime metadata for a context limit during KoboldCPP discovery when possible.
-- Store the detected context limit in the runtime profile.
-- Estimate prompt size locally before each LLM cleanup request.
-- Reserve space for the model's cleanup response.
-- Always preserve the latest raw transcript sections in their original text form.
-- Never compact or summarize the latest raw sections being cleaned.
-- If the prompt is too large, reduce only supporting material: recent raw context, current context summary, and older cleaned transcript context.
-- The final `smoothed_text` output must be built from original transcript text and cleaned transcript state, not from compacted summaries.
-- If future work adds a separate compaction LLM call, that call may produce only support context summaries; it must not replace latest raw sections.
-
-Initial implementation may use an approximate token estimator. A dedicated tokenizer can be added later behind the same guard interface.
+The merge prompt is intrinsically small: the model is sent only the bounded editable hot tail
+(`merge_lookback_*`), the compact `context_summary`, a little recent raw context, and the new
+sections — never the whole transcript. Output is capped by `llm_merge_max_tokens`. This keeps
+each cleanup call fast and well within the local model's context, so no separate token-budget
+guard is needed. (KoboldCPP discovery still records `context_limit_tokens` in the profile for
+diagnostics and possible future use; it is not currently consumed.)
 
 ## Event Types
 
@@ -379,7 +405,6 @@ The prototype reuses the broader UI event/command idea and starts with these con
 - `RecordingStarted`
 - `RecordingStopped`
 - `AudioLevelChanged`
-- `SpeechTurnStarted`
 - `SpeechTurnDiscarded`
 - `SpeechTurnCompleted`
 - `TranscriptionStarted`
@@ -454,7 +479,7 @@ Layer 3:
 - fake no-audio turns are discarded before STT,
 - fake `BLANK_AUDIO` turns are discarded before raw transcript and LLM merge,
 - fake artifact captions are discarded before raw transcript and LLM merge,
-- a `renew` context action seals the prior context into `committed_text` and the full-text
-  log while the main panel resets to the new context,
-- stopping seals the current working transcript to the full-text log,
+- the settled head is preserved across `continue`/`paragraph`/`renew` (only the hot tail can
+  change), with a new paragraph started on `paragraph`/`renew`,
+- the full transcript snapshot is written to the durable file on each update,
 - stale or stopped processing cannot overwrite state after stop.

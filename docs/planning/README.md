@@ -13,6 +13,7 @@ This directory is pySecretary's persistent planning memory. Keep active roadmap,
 - [`../modules/voice_prototype.md`](../modules/voice_prototype.md): automatic voice smoothing prototype contract.
 - [`../modules/events.md`](../modules/events.md): event/command/state data contracts and reducer.
 - [`../modules/transcript.md`](../modules/transcript.md): thought separation and transcript merge contract.
+- [`../modules/llm_queue.md`](../modules/llm_queue.md): coalescing LLM request queue contract.
 - [`../modules/context_budget.md`](../modules/context_budget.md): prompt context-window budgeting contract.
 - [`../modules/console.md`](../modules/console.md): CLI status indicator contract.
 - [`../modules/ui.md`](../modules/ui.md): lightweight UI dashboard, streaming feedback, and concurrency contract.

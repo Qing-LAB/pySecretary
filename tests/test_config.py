@@ -30,10 +30,8 @@ class SecretaryConfigTests(unittest.TestCase):
         self.assertEqual(config.partial_turn_seconds, 6.0)
         self.assertEqual(config.partial_overlap_seconds, 1.0)
         self.assertTrue(config.llm_disable_thinking)
-        self.assertEqual(config.llm_context_window_tokens, 16384)
-        self.assertEqual(config.llm_context_response_reserved_tokens, 1024)
-        self.assertEqual(config.llm_context_prompt_overhead_tokens, 768)
-        self.assertEqual(config.llm_context_safety_tokens, 256)
+        self.assertEqual(config.merge_lookback_sentences, 1)
+        self.assertEqual(config.merge_lookback_words, 40)
         self.assertEqual(config.transcript_path, "conversation.txt")
         self.assertEqual(config.thought_log_path, "thoughts.log")
         self.assertEqual(config.prototype_log_path, "prototype_transcript.log")
@@ -61,11 +59,9 @@ class SecretaryConfigTests(unittest.TestCase):
             "PSEC_PARTIAL_TURN_SECONDS": "4.5",
             "PSEC_PARTIAL_OVERLAP_SECONDS": "0.75",
             "PSEC_LLM_DISABLE_THINKING": "0",
+            "PSEC_MERGE_LOOKBACK_SENTENCES": "2",
+            "PSEC_MERGE_LOOKBACK_WORDS": "25",
             "PSEC_TRANSCRIPTION_MIN_PEAK_LEVEL": "0.04",
-            "PSEC_LLM_CONTEXT_WINDOW_TOKENS": "12288",
-            "PSEC_LLM_CONTEXT_RESPONSE_RESERVED_TOKENS": "512",
-            "PSEC_LLM_CONTEXT_PROMPT_OVERHEAD_TOKENS": "333",
-            "PSEC_LLM_CONTEXT_SAFETY_TOKENS": "111",
             "PSEC_OUTPUT_WAV_PATH": "/tmp/out.wav",
             "PSEC_TRANSCRIPT_PATH": "/tmp/transcript.txt",
             "PSEC_THOUGHT_LOG_PATH": "/tmp/thoughts.log",
@@ -97,11 +93,9 @@ class SecretaryConfigTests(unittest.TestCase):
         self.assertEqual(config.partial_turn_seconds, 4.5)
         self.assertEqual(config.partial_overlap_seconds, 0.75)
         self.assertFalse(config.llm_disable_thinking)
+        self.assertEqual(config.merge_lookback_sentences, 2)
+        self.assertEqual(config.merge_lookback_words, 25)
         self.assertEqual(config.transcription_min_peak_level, 0.04)
-        self.assertEqual(config.llm_context_window_tokens, 12288)
-        self.assertEqual(config.llm_context_response_reserved_tokens, 512)
-        self.assertEqual(config.llm_context_prompt_overhead_tokens, 333)
-        self.assertEqual(config.llm_context_safety_tokens, 111)
         self.assertEqual(config.output_wav_path, "/tmp/out.wav")
         self.assertEqual(config.transcript_path, "/tmp/transcript.txt")
         self.assertEqual(config.thought_log_path, "/tmp/thoughts.log")

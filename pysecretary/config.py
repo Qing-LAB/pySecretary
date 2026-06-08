@@ -29,10 +29,8 @@ class SecretaryConfig:
     llm_merge_idle_seconds: float = 0.75
     llm_merge_max_tokens: int = 384
     llm_disable_thinking: bool = True
-    llm_context_window_tokens: int = 16384
-    llm_context_response_reserved_tokens: int = 1024
-    llm_context_prompt_overhead_tokens: int = 768
-    llm_context_safety_tokens: int = 256
+    merge_lookback_sentences: int = 1
+    merge_lookback_words: int = 40
     worker_poll_seconds: float = 0.05
     output_wav_path: str = "output.wav"
     transcript_path: str = "conversation.txt"
@@ -67,10 +65,8 @@ class SecretaryConfig:
             llm_merge_idle_seconds=float(os.getenv("PSEC_LLM_MERGE_IDLE_SECONDS", "0.75")),
             llm_merge_max_tokens=int(os.getenv("PSEC_LLM_MERGE_MAX_TOKENS", "384")),
             llm_disable_thinking=os.getenv("PSEC_LLM_DISABLE_THINKING", "1").lower() in ("1", "true", "yes"),
-            llm_context_window_tokens=int(os.getenv("PSEC_LLM_CONTEXT_WINDOW_TOKENS", "16384")),
-            llm_context_response_reserved_tokens=int(os.getenv("PSEC_LLM_CONTEXT_RESPONSE_RESERVED_TOKENS", "1024")),
-            llm_context_prompt_overhead_tokens=int(os.getenv("PSEC_LLM_CONTEXT_PROMPT_OVERHEAD_TOKENS", "768")),
-            llm_context_safety_tokens=int(os.getenv("PSEC_LLM_CONTEXT_SAFETY_TOKENS", "256")),
+            merge_lookback_sentences=int(os.getenv("PSEC_MERGE_LOOKBACK_SENTENCES", "1")),
+            merge_lookback_words=int(os.getenv("PSEC_MERGE_LOOKBACK_WORDS", "40")),
             worker_poll_seconds=float(os.getenv("PSEC_WORKER_POLL_SECONDS", "0.05")),
             output_wav_path=os.getenv("PSEC_OUTPUT_WAV_PATH", "output.wav"),
             transcript_path=os.getenv("PSEC_TRANSCRIPT_PATH", "conversation.txt"),

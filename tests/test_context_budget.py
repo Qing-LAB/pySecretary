@@ -1,60 +1,43 @@
 import unittest
 
-from pysecretary.context_budget import (
-    combine_stable_prefix,
-    estimate_tokens,
-    prepare_merge_context,
-)
+from pysecretary.context_budget import combine_stable_prefix, split_recent_tail
 
 
 class ContextBudgetTests(unittest.TestCase):
-    def test_estimator_uses_conservative_character_ratio(self) -> None:
-        self.assertEqual(estimate_tokens(""), 0)
-        self.assertEqual(estimate_tokens("abcd"), 1)
-        self.assertEqual(estimate_tokens("abcde"), 2)
+    def test_split_recent_tail_keeps_last_sentence_editable(self) -> None:
+        head, tail = split_recent_tail("First sentence. Second part still going", max_sentences=1, max_words=40)
+        self.assertEqual(head, "First sentence. ")
+        self.assertEqual(tail, "Second part still going")
 
-    def test_prepare_merge_context_preserves_latest_raw_text_and_reduces_support(self) -> None:
-        latest = '{"transcript_sections": [{"raw_text": "latest original words"}]}'
-        prepared = prepare_merge_context(
-            existing_smoothed_text="old sentence. " * 200,
-            recent_raw_context="recent raw. " * 100,
-            current_context_summary="context summary. " * 100,
-            new_raw_text=latest,
-            context_limit_tokens=180,
-            response_reserved_tokens=40,
-            safety_tokens=20,
-            prompt_overhead_tokens=40,
-        )
+    def test_split_recent_tail_caps_by_words(self) -> None:
+        text = "one two three four five six seven eight"
+        head, tail = split_recent_tail(text, max_sentences=1, max_words=3)
+        # No sentence boundary, so the word cap keeps only the last 3 words editable.
+        self.assertEqual(tail, "six seven eight")
+        self.assertEqual(head, "one two three four five ")
 
-        self.assertEqual(prepared.new_raw_text, latest)
-        self.assertTrue(prepared.support_was_reduced)
-        self.assertTrue(prepared.stable_prefix)
-        self.assertLess(prepared.estimated_input_tokens, 180)
+    def test_split_recent_tail_word_cap_overrides_long_sentence(self) -> None:
+        # A long final sentence is still bounded to the word cap (shorter tail wins).
+        text = "a b c d e f g h i j."
+        _head, tail = split_recent_tail(text, max_sentences=1, max_words=3)
+        self.assertEqual(tail, "h i j.")
 
-    def test_latest_sections_are_preserved_even_when_they_exceed_available_budget(self) -> None:
-        latest = '{"raw_text": "' + ("latest " * 300) + '"}'
-        prepared = prepare_merge_context(
-            existing_smoothed_text="old text",
-            recent_raw_context="recent",
-            current_context_summary="context",
-            new_raw_text=latest,
-            context_limit_tokens=80,
-            response_reserved_tokens=20,
-            safety_tokens=10,
-            prompt_overhead_tokens=20,
-        )
-
-        self.assertEqual(prepared.new_raw_text, latest)
-        self.assertEqual(prepared.existing_smoothed_text, "")
-        self.assertEqual(prepared.recent_raw_context, "")
-        self.assertEqual(prepared.current_context_summary, "")
-        self.assertTrue(prepared.latest_exceeds_budget)
+    def test_split_recent_tail_handles_empty(self) -> None:
+        self.assertEqual(split_recent_tail("", 1, 40), ("", ""))
 
     def test_combine_stable_prefix_uses_original_prefix_text(self) -> None:
         self.assertEqual(
             combine_stable_prefix("Original prefix.", "Cleaned latest."),
             "Original prefix.\nCleaned latest.",
         )
+
+    def test_combine_stable_prefix_joins_mid_sentence_with_space(self) -> None:
+        # A head ending mid-sentence (no terminal punctuation) continues with a space.
+        self.assertEqual(combine_stable_prefix("the meeting is", "at noon"), "the meeting is at noon")
+
+    def test_combine_stable_prefix_handles_empty_sides(self) -> None:
+        self.assertEqual(combine_stable_prefix("", "tail"), "tail")
+        self.assertEqual(combine_stable_prefix("head", ""), "head")
 
 
 if __name__ == "__main__":

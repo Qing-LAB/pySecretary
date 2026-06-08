@@ -73,8 +73,9 @@ Required fields:
 - `version`: KoboldCPP version if reported.
 - `model_id`: current model id if reported.
 - `context_limit_tokens`: detected model context-window size, or `None` if it cannot be
-  determined. Consumed by the merge context guard
-  ([`context_budget.md`](context_budget.md)).
+  determined. Recorded for diagnostics/future use; not currently consumed (the merge prompt
+  is intrinsically small — see [`voice_prototype.md`](../modules/voice_prototype.md) Prompt
+  Size).
 - `protected`: whether KoboldCPP reports protected mode.
 - `capabilities`: boolean feature flags from `/api/extra/version`, excluding metadata fields.
 - `routes`: discovered route paths.
@@ -106,8 +107,8 @@ Probe these sources and take the largest credible value (`>= 512`):
 Detection walks nested JSON for context-size keys (normalized, ignoring case and
 non-alphanumerics): `context_size`, `context_length`, `context_limit`,
 `context_window`, `max_context*`, `n_ctx`, `n_ctx_train`, `true_max_context_length`.
-If nothing credible is found, `context_limit_tokens` is `None` and consumers fall back
-to `config.llm_context_window_tokens`. All probes are optional: failures must not raise.
+If nothing credible is found, `context_limit_tokens` is `None`. All probes are optional:
+failures must not raise.
 
 Preferred route order:
 
