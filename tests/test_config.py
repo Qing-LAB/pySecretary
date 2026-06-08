@@ -37,6 +37,7 @@ class SecretaryConfigTests(unittest.TestCase):
         self.assertEqual(config.transcript_path, "conversation.txt")
         self.assertEqual(config.thought_log_path, "thoughts.log")
         self.assertEqual(config.prototype_log_path, "prototype_transcript.log")
+        self.assertEqual(config.prototype_trace_log_path, "prototype_trace.log")
         self.assertEqual(config.prototype_host, "127.0.0.1")
         self.assertEqual(config.prototype_port, 8765)
         self.assertEqual(config.request_timeout, 120.0)

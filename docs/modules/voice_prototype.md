@@ -389,6 +389,11 @@ Splice rules (controller-owned), driven by `context_action`:
 - After each update the full transcript is written (overwritten) to a durable snapshot file
   (`config.prototype_log_path`, default `prototype_transcript.log`, gitignored via `*.log`),
   so the complete text survives a crash. Writes are best-effort and never disrupt capture.
+- A separate **append-only JSONL trace** (`config.prototype_trace_log_path`, default
+  `prototype_trace.log`) records, in time order, each `stt` event (raw Whisper text vs.
+  cleaned) and each `merge` event (deduped sections in, editable tail, the LLM region out,
+  the chosen action, and the result tail). This is for diagnosis — it shows whether an error
+  originated in transcription or in cleanup. Best-effort; disabled when the path is empty.
 
 ```mermaid
 flowchart LR

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import queue
 import re
 import threading
@@ -97,6 +98,7 @@ class PrototypeController:
         self._stt_done = threading.Event()
         self._workers: list[threading.Thread] = []
         self._lock = threading.RLock()
+        self._trace_lock = threading.Lock()
         self._subscribers: list[queue.Queue[AssistantEvent]] = []
         self._audio_turn_queue: queue.Queue[QueuedAudioTurn] = queue.Queue()
         # Coalescing LLM merge queue: raw transcript sections for the same context are
@@ -147,6 +149,7 @@ class PrototypeController:
             self._audio_turn_queue = queue.Queue()
             self._merge_queue = LLMRequestQueue()
             self._next_sequence = 1
+            self._trace("session_start")
             self._emit("RecordingStarted")
             self._emit("AssistantStateChanged", status="listening")
             self._emit_queue_depths()
@@ -305,22 +308,34 @@ class PrototypeController:
         self._set_stt_active(True)
         try:
             self._emit("TranscriptionStarted", turn_id=turn_id)
-            raw_text = self.stt.transcribe_audio(queued_turn.turn.wav_bytes).strip()
+            whisper_text = self.stt.transcribe_audio(queued_turn.turn.wav_bytes).strip()
             if self._stop_event.is_set():
                 return
-            if not raw_text:
+            if not whisper_text:
+                self._trace("stt_discarded", turn_id=turn_id, sequence=queued_turn.sequence, reason="empty", raw="")
                 self._emit("TranscriptionDiscarded", turn_id=turn_id, text="", reason="empty")
                 return
-            if is_non_speech_transcript(raw_text):
-                self._emit("TranscriptionDiscarded", turn_id=turn_id, text=raw_text, reason="non_speech_sentinel")
+            if is_non_speech_transcript(whisper_text):
+                self._trace("stt_discarded", turn_id=turn_id, sequence=queued_turn.sequence, reason="non_speech_sentinel", raw=whisper_text)
+                self._emit("TranscriptionDiscarded", turn_id=turn_id, text=whisper_text, reason="non_speech_sentinel")
                 return
             # Remove embedded background sound cues (e.g. "(coughing)") before the text
             # reaches the LLM merge worker; discard if nothing meaningful remains.
-            content_text = clean_transcript_artifacts(raw_text)
+            content_text = clean_transcript_artifacts(whisper_text)
             if not content_text or is_non_content_transcript(content_text):
-                self._emit("TranscriptionDiscarded", turn_id=turn_id, text=raw_text, reason="non_content_artifact")
+                self._trace("stt_discarded", turn_id=turn_id, sequence=queued_turn.sequence, reason="non_content_artifact", raw=whisper_text)
+                self._emit("TranscriptionDiscarded", turn_id=turn_id, text=whisper_text, reason="non_content_artifact")
                 return
             raw_text = content_text
+            self._trace(
+                "stt",
+                turn_id=turn_id,
+                sequence=queued_turn.sequence,
+                raw=whisper_text,
+                cleaned=raw_text,
+                duration_seconds=round(queued_turn.turn.duration_seconds, 2),
+                is_partial=queued_turn.turn.is_partial,
+            )
 
             transcribed_at = time_wall()
             self._emit(
@@ -436,6 +451,16 @@ class PrototypeController:
         if full_text != current:
             self._write_full_transcript_log(full_text)
 
+        self._trace(
+            "merge",
+            turn_ids=turn_ids,
+            action=context_action,
+            sections=[raw_transcript.text for raw_transcript in deduped],
+            tail_in=editable_tail,
+            region=region,
+            feedback=list(result.feedback),
+            full_tail=full_text[-240:],
+        )
         self._emit(
             "SmoothedTranscriptUpdated",
             turn_id=turn_id,
@@ -530,6 +555,26 @@ class PrototypeController:
         with self._lock:
             options = {field: float(getattr(self._vad, field)) for field in self._WORKER_OPTION_FIELDS}
         self._emit("WorkerOptionsChanged", options=options)
+
+    def _trace(self, event: str, **fields: object) -> None:
+        # Append-only, time-ordered JSONL trace of raw STT and LLM cleanup, so a run can be
+        # analyzed to see whether a problem originated in transcription or cleanup.
+        # Best-effort; never disrupts the pipeline.
+        path = getattr(self.config, "prototype_trace_log_path", "")
+        if not path:
+            return
+        record = {"ts": timestamp(), "t": round(time_wall(), 3), "event": event, **fields}
+        try:
+            line = json.dumps(record, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return
+        try:
+            with self._trace_lock:
+                with open(path, "a", encoding="utf-8") as handle:
+                    handle.write(line + "\n")
+        except OSError:
+            if self.config.debug:
+                print(f"Could not write prototype trace log at {path}")
 
     def _write_full_transcript_log(self, full_text: str) -> None:
         # Best-effort durable snapshot of the complete current transcript. Overwritten on

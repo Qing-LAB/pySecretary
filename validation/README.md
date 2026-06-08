@@ -8,14 +8,21 @@ evaluate STT/cleanup quality together.
 ```bash
 cd /home/qqing/Work/pySecretary
 export PSEC_PROTOTYPE_LOG_PATH=/home/qqing/Work/pySecretary/validation/run1.log
+export PSEC_PROTOTYPE_TRACE_LOG_PATH=/home/qqing/Work/pySecretary/validation/run1.trace.jsonl
 scripts/run-prototype-ui.sh
 ```
 
 Then open the dashboard, make sure KoboldCPP is up, click **Start**, and read
 [`passage.txt`](passage.txt) aloud. Click **Stop** when done.
 
-The full cleaned transcript is written (and overwritten) to `validation/run1.log`. Tell me
-when you've finished a read and I'll read that file and compare it against the passage.
+Two files are produced (both readable by me):
+- `validation/run1.log` — the full cleaned transcript (overwritten each update, final state).
+- `validation/run1.trace.jsonl` — an **append-only, time-ordered trace**: each `stt` event
+  (raw Whisper text vs. cleaned), and each `merge` event (deduped sections in, editable tail,
+  the LLM region out, the action, and the result). This lets me see whether a problem came
+  from STT or from the LLM cleanup.
+
+Tell me when you've finished a read and I'll read both and compare against the passage.
 
 Use a fresh file per run if you want to keep history: `…/validation/run2.log`, etc.
 (`*.log` is gitignored, so these stay local.)

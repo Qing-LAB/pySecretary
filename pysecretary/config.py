@@ -39,6 +39,7 @@ class SecretaryConfig:
     transcript_path: str = "conversation.txt"
     thought_log_path: str = "thoughts.log"
     prototype_log_path: str = "prototype_transcript.log"
+    prototype_trace_log_path: str = "prototype_trace.log"
     prototype_host: str = "127.0.0.1"
     prototype_port: int = 8765
     request_timeout: float = 120.0
@@ -78,6 +79,7 @@ class SecretaryConfig:
             transcript_path=os.getenv("PSEC_TRANSCRIPT_PATH", "conversation.txt"),
             thought_log_path=os.getenv("PSEC_THOUGHT_LOG_PATH", "thoughts.log"),
             prototype_log_path=os.getenv("PSEC_PROTOTYPE_LOG_PATH", "prototype_transcript.log"),
+            prototype_trace_log_path=os.getenv("PSEC_PROTOTYPE_TRACE_LOG_PATH", "prototype_trace.log"),
             prototype_host=os.getenv("PSEC_PROTOTYPE_HOST", "127.0.0.1"),
             prototype_port=int(os.getenv("PSEC_PROTOTYPE_PORT", "8765")),
             request_timeout=float(os.getenv("PSEC_REQUEST_TIMEOUT", "120")),

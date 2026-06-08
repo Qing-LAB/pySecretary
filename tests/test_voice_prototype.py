@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import threading
@@ -598,6 +599,38 @@ class VoicePrototypeTests(unittest.TestCase):
         self.assertIn("alpha beta gamma delta", text)
         self.assertIn("epsilon zeta", text)
         self.assertEqual(text.count("beta gamma delta"), 1)  # not duplicated
+
+    def test_trace_log_records_raw_stt_and_merge_in_sequence(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        trace_path = os.path.join(tmp.name, "trace.jsonl")
+        config = SecretaryConfig(
+            prototype_trace_log_path=trace_path,
+            prototype_log_path=os.path.join(tmp.name, "snap.log"),
+        )
+        controller = PrototypeController(
+            config=config,
+            turn_source=ScriptedTurnSource([make_turn(b"w")]),
+            stt=FakeStt(["hello world here"]),  # type: ignore[arg-type]
+            merger=FakeMerger(),
+        )
+
+        controller.handle_command(AssistantCommand(type="StartAutomaticCapture"))
+        self.assertTrue(controller.wait_until_idle())
+
+        with open(trace_path, encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle if line.strip()]
+        events = [record["event"] for record in records]
+        self.assertIn("session_start", events)
+        self.assertIn("stt", events)
+        self.assertIn("merge", events)
+
+        stt = next(record for record in records if record["event"] == "stt")
+        self.assertEqual(stt["raw"], "hello world here")
+        merge = next(record for record in records if record["event"] == "merge")
+        self.assertIn("region", merge)
+        self.assertIn("tail_in", merge)
+        self.assertEqual(merge["sections"], ["hello world here"])
 
     def test_drain_pending_as_raw_preserves_queued_text(self) -> None:
         from pysecretary.llm_queue import LLMRequest
