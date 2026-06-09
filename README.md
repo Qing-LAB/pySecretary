@@ -89,6 +89,32 @@ scripts/run-prototype-ui.sh --mock
 
 If the default port `8765` is busy, the helper script automatically chooses the next free port unless you pass `--port` explicitly.
 
+### Running on Windows (native)
+
+Live microphone capture is most reliable **natively on Windows** — WSL (especially on
+Windows 10) usually cannot pass a microphone through to Linux. On Windows the
+`sounddevice`/`soundfile` wheels **bundle PortAudio/libsndfile**, so there is no system-library
+step. Use the PowerShell launcher, which installs `uv` if it is missing, creates `.venv`,
+installs dependencies, and starts the prototype UI:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-prototype-ui.ps1
+powershell -ExecutionPolicy Bypass -File scripts\run-prototype-ui.ps1 --mock     # no mic/server
+```
+
+If KoboldCPP is remote, run your SSH tunnel **on Windows** so the forward lands on Windows'
+loopback, then point pySecretary at it (PowerShell):
+
+```powershell
+# Windows shell: tunnel terminates on Windows localhost
+ssh -N -L 5001:localhost:5001 user@remote-linux-host
+$env:PSEC_API_BASE = "http://localhost:5001"
+```
+
+The first run will trigger a Windows microphone-permission prompt (Settings → Privacy →
+Microphone → allow desktop apps). The `.sh` launchers are bash-only; on Windows use the
+`.ps1` launcher (or `python -m pysecretary prototype-ui` inside the activated `.venv`).
+
 ## Tests
 
 Run the offline regression suite:
@@ -142,7 +168,8 @@ scripts/run-tests.sh --ui      # + browser UI validation
 - `docs/modules/ui.md`: lightweight UI dashboard, streaming feedback, and concurrency design
 - `docs/planning/`: active roadmap, TODO list, and archive policy
 - `docs/testing/strategy.md`: layered testing strategy
-- `scripts/run-tests.sh`: managed test runner; `scripts/run-prototype-ui.sh`: prototype launcher
+- `scripts/run-tests.sh`: managed test runner; `scripts/run-prototype-ui.sh`: prototype launcher (Linux/macOS/WSL)
+- `scripts/run-prototype-ui.ps1`: Windows PowerShell launcher (uv-managed; native mic capture)
 - `tests/`: offline module tests, API contract tests, and an opt-in Playwright UI test
 - `requirements.txt`: runtime Python dependencies
 - `requirements-dev.txt`: dev/test-only dependencies (Playwright)
@@ -153,6 +180,12 @@ scripts/run-tests.sh --ui      # + browser UI validation
 - **"PortAudio library not found"** (or a `soundfile`/libsndfile error): install the native
   libraries — `sudo apt-get install -y libportaudio2 libsndfile1`. These are system packages,
   not pip/uv installable. `--mock` mode runs without them.
+- **`stage=error:audio_capture` in WSL**: WSL (especially Windows 10) typically does not pass
+  a microphone through to Linux, so the capture worker fails even with PortAudio installed.
+  Run pySecretary **natively on Windows** with `scripts\run-prototype-ui.ps1` (see *Running on
+  Windows*), or use `--mock` in WSL for UI/pipeline testing without a mic. Confirm with
+  `python -c "import sounddevice as sd; print(sd.query_devices())"` — no `in`>0 device means WSL
+  has no mic source.
 - **`/usr/bin/env: 'bash\r'`** on Windows/WSL: the shell scripts were checked out with CRLF.
   Fix with `sudo apt-get install -y dos2unix && dos2unix scripts/*.sh` (or
   `sed -i 's/\r//g' scripts/*.sh`), and set `git config core.autocrlf false`. The committed
