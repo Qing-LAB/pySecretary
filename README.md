@@ -95,7 +95,8 @@ Live microphone capture is most reliable **natively on Windows** — WSL (especi
 Windows 10) usually cannot pass a microphone through to Linux. On Windows the
 `sounddevice`/`soundfile` wheels **bundle PortAudio/libsndfile**, so there is no system-library
 step. Use the PowerShell launcher, which installs `uv` if it is missing, creates `.venv`,
-installs dependencies, and starts the prototype UI:
+installs dependencies, and starts the prototype UI. It uses its own `.venv-win` directory so a
+Windows checkout shared with WSL/Linux never collides with the Unix `.venv`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run-prototype-ui.ps1

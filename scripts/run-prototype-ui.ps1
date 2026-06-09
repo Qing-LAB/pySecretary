@@ -29,7 +29,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $BaseDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$VenvDir = if ($env:PSEC_VENV_DIR) { $env:PSEC_VENV_DIR } else { Join-Path $BaseDir '.venv' }
+# Use an OS-specific venv dir so a Windows checkout shared with WSL/Linux does not collide
+# with the Unix '.venv' (different layout: Scripts\python.exe vs bin/python).
+$VenvDir = if ($env:PSEC_VENV_DIR) { $env:PSEC_VENV_DIR } else { Join-Path $BaseDir '.venv-win' }
 $RequirementsFile = Join-Path $BaseDir 'requirements.txt'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 
@@ -91,7 +93,18 @@ if (-not (Test-Path $VenvPython)) {
         # A .venv without Scripts\python.exe is almost always a Linux/WSL venv (bin/python)
         # copied onto a Windows checkout. uv can't reuse it; recreate cleanly.
         Write-Host "Existing '$VenvDir' has no Windows python.exe (likely a Linux/WSL venv); recreating..."
-        Remove-Item -Recurse -Force $VenvDir
+        try {
+            Remove-Item -Recurse -Force $VenvDir -ErrorAction Stop
+        }
+        catch {
+            Write-Host ''
+            Write-Warning "Could not delete '$VenvDir' - a process is holding a file inside it."
+            Write-Host    'This is usually VS Code''s Python extension, an activated-venv terminal, or a'
+            Write-Host    'running python process. Close those, then delete it and re-run:'
+            Write-Host    "    Remove-Item -Recurse -Force '$VenvDir'"
+            Write-Host    "    rmdir /s /q `"$VenvDir`"     (cmd fallback; handles Linux symlinks better)"
+            exit 1
+        }
     }
     Write-Host "Creating virtual environment with uv (Python $PyVersion; uv downloads it if absent)..."
     & $Uv venv $VenvDir --python $PyVersion
