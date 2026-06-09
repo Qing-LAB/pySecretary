@@ -7,3 +7,5 @@ __pycache__/
 *.log
 conversation.txt
 .claude/
+# Local validation run artifacts (keep passage.txt and README.md tracked)
+validation/*.jsonl
