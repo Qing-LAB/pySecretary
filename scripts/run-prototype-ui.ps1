@@ -84,10 +84,21 @@ if (-not $Uv) {
 }
 Write-Host "uv:      $Uv"
 
-# --- Create venv if missing ---
+# --- Create venv if missing (or if a foreign/Linux venv is present) ---
+$PyVersion = if ($env:PSEC_PYTHON_VERSION) { $env:PSEC_PYTHON_VERSION } else { '3.12' }
 if (-not (Test-Path $VenvPython)) {
-    Write-Host 'Creating virtual environment with uv...'
-    & $Uv venv $VenvDir
+    if (Test-Path $VenvDir) {
+        # A .venv without Scripts\python.exe is almost always a Linux/WSL venv (bin/python)
+        # copied onto a Windows checkout. uv can't reuse it; recreate cleanly.
+        Write-Host "Existing '$VenvDir' has no Windows python.exe (likely a Linux/WSL venv); recreating..."
+        Remove-Item -Recurse -Force $VenvDir
+    }
+    Write-Host "Creating virtual environment with uv (Python $PyVersion; uv downloads it if absent)..."
+    & $Uv venv $VenvDir --python $PyVersion
+    if (-not (Test-Path $VenvPython)) {
+        Write-Error "uv venv did not create '$VenvPython'. Ensure Python $PyVersion is installable (uv can fetch it) and re-run."
+        exit 1
+    }
 }
 
 # --- Install/refresh dependencies, stamped against requirements.txt mtime ---
