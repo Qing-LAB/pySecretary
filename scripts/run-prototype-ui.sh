@@ -82,6 +82,15 @@ fi
 
 cd "$BASE_DIR"
 
+# Microphone capture needs the PortAudio system library (sounddevice is only the Python
+# binding; uv/pip cannot install the native library). Warn early but do not block --mock.
+if ! python -c "import sounddevice" >/dev/null 2>&1; then
+  echo "WARNING: audio backend unavailable (PortAudio not found)."
+  echo "  Live microphone capture will fail. Install the system libraries, e.g.:"
+  echo "    sudo apt-get install -y libportaudio2 libsndfile1"
+  echo "  ('--mock' demo mode does not need audio.)"
+fi
+
 port_available() {
   local host="$1"
   local port="$2"

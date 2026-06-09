@@ -19,6 +19,18 @@ All implementation work follows [`docs/planning/protocol.md`](docs/planning/prot
 
 ## Setup
 
+> System libraries (not pip/uv installable): live audio needs **PortAudio** and
+> **libsndfile** — `sounddevice`/`soundfile` are only the Python bindings and load these
+> native libraries at import. On Debian/Ubuntu/WSL:
+>
+> ```bash
+> sudo apt-get install -y libportaudio2 libsndfile1
+> ```
+>
+> Without them, the app still imports and `--mock` mode works, but microphone capture fails
+> with a "PortAudio library not found" message. (WSL note: microphone access needs WSLg /
+> a working PulseAudio backend on the Windows side.)
+
 1. Create a virtual environment:
 
 ```bash
@@ -138,5 +150,12 @@ scripts/run-tests.sh --ui      # + browser UI validation
 
 ## Troubleshooting
 
-- On Linux, you may need PortAudio system libraries for `sounddevice`.
+- **"PortAudio library not found"** (or a `soundfile`/libsndfile error): install the native
+  libraries — `sudo apt-get install -y libportaudio2 libsndfile1`. These are system packages,
+  not pip/uv installable. `--mock` mode runs without them.
+- **`/usr/bin/env: 'bash\r'`** on Windows/WSL: the shell scripts were checked out with CRLF.
+  Fix with `sudo apt-get install -y dos2unix && dos2unix scripts/*.sh` (or
+  `sed -i 's/\r//g' scripts/*.sh`), and set `git config core.autocrlf false`. The committed
+  `.gitattributes` keeps `*.sh` as LF on future checkouts. On `/mnt/c`, run scripts with
+  `bash scripts/…` (exec bits don't persist) — or clone into the WSL home filesystem.
 - If the KoboldCPP server exposes a non-standard endpoint, run `python -m pysecretary inspect-kobold` to see what the adapter discovered.

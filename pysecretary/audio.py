@@ -6,14 +6,17 @@ from dataclasses import dataclass
 from threading import Event
 from typing import Callable, Iterable, Iterator
 
+# These bindings load native system libraries at import time (PortAudio / libsndfile). A
+# missing system library raises OSError, not ImportError, so catch both — otherwise the whole
+# app crashes at import instead of degrading to "audio unavailable".
 try:
     import sounddevice as sd
-except ImportError:
+except (ImportError, OSError):
     sd = None
 
 try:
     import soundfile as sf
-except ImportError:
+except (ImportError, OSError):
     sf = None
 
 from .config import SecretaryConfig
@@ -369,6 +372,9 @@ def _pcm_chunks_to_wav(chunks: list[bytes], sample_rate: int) -> bytes:
 def _require_dependency(dependency: object | None, name: str) -> object:
     if dependency is None:
         raise RuntimeError(
-            f"{name} is required for live audio. Install project dependencies with `pip install -r requirements.txt`."
+            f"{name} is unavailable for live audio. Install the Python package "
+            f"(requirements.txt) AND its native system library: "
+            f"`sudo apt-get install -y libportaudio2 libsndfile1` (sounddevice needs "
+            f"PortAudio, soundfile needs libsndfile)."
         )
     return dependency
