@@ -1,0 +1,7 @@
+# This project runs on Linux/WSL. Normalize line endings to LF in the repository and on
+# checkout, regardless of the contributor's core.autocrlf setting.
+* text=auto eol=lf
+
+# Shell scripts MUST be LF: a trailing CR turns the shebang into "bash\r", which fails with
+# "/usr/bin/env: 'bash\r': No such file or directory" on Linux/WSL.
+*.sh text eol=lf
